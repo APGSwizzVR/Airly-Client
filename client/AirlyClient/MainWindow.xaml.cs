@@ -1,3 +1,4 @@
+using System.IO;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Net.Http;
@@ -529,7 +530,7 @@ public partial class MainWindow : Window
         {
             var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Airly.ico");
             if (File.Exists(iconPath))
-                Icon = new BitmapImage(new Uri(iconPath, UriKind.Absolute));
+                Icon = new BitmapImage { UriSource = new Uri(iconPath, UriKind.Absolute), CacheOption = BitmapCacheOption.OnLoad };
         }
         catch { }
     }
