@@ -48,7 +48,6 @@ public partial class MainWindow : Window
         LoadDemoUiState();
         InitializeClientMetrics();
         InitializeModelMatching();
-        TryLoadApplicationIcon();
         RefreshTracking();
         Closed += (_, _) => _settings.Save();
         Closed += (_, _) => CompositionTarget.Rendering -= CompositionTarget_Rendering;
@@ -711,17 +710,6 @@ public partial class MainWindow : Window
             HeaderLatencyText.Text = "LATENCY —";
         }
         finally { _metricsRequestRunning = false; }
-    }
-
-    private void TryLoadApplicationIcon()
-    {
-        try
-        {
-            var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Airly.ico");
-            if (File.Exists(iconPath))
-                Icon = new BitmapImage { UriSource = new Uri(iconPath, UriKind.Absolute), CacheOption = BitmapCacheOption.OnLoad };
-        }
-        catch { }
     }
 
     private static string FormatUtcObservation(string? reportTime, long? obsTime)
