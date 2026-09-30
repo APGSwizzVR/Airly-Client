@@ -24,7 +24,7 @@ jobs:
           $version = "${{ github.ref_name }}" -replace "^client-v", ""
           "version=$version" >> $env:GITHUB_OUTPUT
       - name: Publish EXE
-        run: dotnet publish client/AirlyClient/AirlyClient.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o publish
+        run: dotnet publish client/AirlyClient/AirlyClient.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -p:AssemblyVersion=${{ steps.version.outputs.version }}.0 -p:FileVersion=${{ steps.version.outputs.version }}.0 -p:InformationalVersion=${{ steps.version.outputs.version }} -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o publish
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
       - name: Build installer
