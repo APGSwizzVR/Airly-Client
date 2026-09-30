@@ -30,6 +30,14 @@ jobs:
       - name: Build installer
         shell: pwsh
         run: iscc "/dMyAppVersion=${{ steps.version.outputs.version }}" installer/AirlyClient.iss
+      - name: Locate installer
+        id: installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path $env:GITHUB_WORKSPACE -Recurse -Filter "Airly-Client-Setup.exe" | Select-Object -First 1
+          if (!$installer) { throw "Airly-Client-Setup.exe was not produced." }
+          "path=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -37,4 +45,4 @@ jobs:
           generate_release_notes: true
           files: |
             publish/AirlyClient.exe
-            installer-output/Airly-Client-Setup.exe
+            ${{ steps.installer.outputs.path }}
