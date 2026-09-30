@@ -11,6 +11,7 @@ public partial class App : Application
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         base.OnStartup(e);
+
         try
         {
             var window = new MainWindow();
@@ -43,30 +44,33 @@ public partial class App : Application
         try
         {
             MessageBox.Show(
-                $"Airly Client could not start.
-
-A crash log was saved to:
-{GetLogPath()}
-
-Error: {ex.Message}",
+                "Airly Client could not start." + Environment.NewLine + Environment.NewLine +
+                "A crash log was saved to:" + Environment.NewLine + GetLogPath() + Environment.NewLine + Environment.NewLine +
+                "Error: " + ex.Message,
                 "Airly Client — Startup Error",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
-        catch { }
+        catch
+        {
+        }
     }
 
     private static void LogException(Exception ex)
     {
         try
         {
-            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Airly");
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Airly");
             Directory.CreateDirectory(directory);
-            File.AppendAllText(GetLogPath(), $"[{DateTimeOffset.Now:O}] {ex}
-
-");
+            File.AppendAllText(
+                GetLogPath(),
+                "[" + DateTimeOffset.Now.ToString("O") + "] " + ex + Environment.NewLine + Environment.NewLine);
         }
-        catch { }
+        catch
+        {
+        }
     }
 
     private static string GetLogPath() => Path.Combine(
