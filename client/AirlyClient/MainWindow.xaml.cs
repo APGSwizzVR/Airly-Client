@@ -1,3 +1,4 @@
+using System.Net.Http;
 using System.Collections.ObjectModel;
 using System.Net.Http.Json;
 using System.Windows;
@@ -23,11 +24,11 @@ public partial class MainWindow : Window
     {
         FrequencyGrid.ItemsSource = new[]
         {
-            new { Airport="EGLL", Position="London Ground", Frequency="121.700", Controller="—"},
-            new { Airport="EIDW", Position="Dublin Tower", Frequency="118.600", Controller="—"}
+            new { Airport="EGLL", Position="London Ground", Frequency="121.700", Controller="â"},
+            new { Airport="EIDW", Position="Dublin Tower", Frequency="118.600", Controller="â"}
         };
         ChartList.ItemsSource = new[] {"Airport diagram", "SID", "STAR", "Approach", "Ground / taxi", "Other procedures"};
-        ModelStatus.Text = "Ready — server catalog will be loaded after network authentication.";
+        ModelStatus.Text = "Ready â server catalog will be loaded after network authentication.";
     }
 
     private void Nav_Click(object sender, RoutedEventArgs e)
@@ -49,7 +50,7 @@ public partial class MainWindow : Window
     {
         if (_connected) { Disconnect(); return; }
         ConnectButton.IsEnabled = false;
-        ConnectStatus.Text = "Validating Airly membership…";
+        ConnectStatus.Text = "Validating Airly membershipâ¦";
         try
         {
             var id = AirlyIdBox.Text.Trim();
@@ -94,7 +95,7 @@ public partial class MainWindow : Window
     {
         var icao = AirportSearchBox.Text.Trim().ToUpperInvariant();
         if (icao.Length != 4) { MetarText.Text = "Enter a four-letter ICAO airport code."; return; }
-        MetarText.Text = "Loading METAR…";
+        MetarText.Text = "Loading METARâ¦";
         try
         {
             var response = await _http.GetAsync($"{ClientConfig.ApiBaseUrl}api/weather/metar?icao={Uri.EscapeDataString(icao)}");
