@@ -1,0 +1,17 @@
+namespace AirlyClient.Network;
+
+public sealed record AircraftState(
+    string NetworkId,
+    string Callsign,
+    string ModelCode,
+    string LiveryCode,
+    string? AirlineIcao,
+    double Latitude,
+    double Longitude,
+    double AltitudeFeet,
+    double HeadingDegrees,
+    double GroundSpeedKnots,
+    double VerticalSpeedFeetPerMinute,
+    string? Squawk,
+    string? Frequency,
+    DateTimeOffset UpdatedAt);
