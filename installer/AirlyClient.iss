@@ -1,5 +1,7 @@
 #define MyAppName "Airly Client"
-#define MyAppVersion "0.1.0"
+#ifndef MyAppVersion
+#define MyAppVersion "1.0.0"
+#endif
 #define MyAppPublisher "Airly"
 #define MyAppExeName "AirlyClient.exe"
 

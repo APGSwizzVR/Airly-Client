@@ -8,10 +8,17 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
-        DispatcherUnhandledException += OnDispatcherUnhandledException;
-        AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         base.OnStartup(e);
 
+        if (UpdateService.IsUpdaterLaunch(e.Args))
+        {
+            UpdateService.RunUpdater(e.Args);
+            Shutdown(0);
+            return;
+        }
+
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
+        AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         try
         {
             var window = new MainWindow();

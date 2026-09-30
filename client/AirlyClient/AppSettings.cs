@@ -15,6 +15,8 @@ public sealed class AppSettings
     public bool AutomaticModelMatching { get; set; } = true;
     public string ThemeMode { get; set; } = "Dark";
     public string AccentColor { get; set; } = "#8A96A3";
+    public string UpdateFirstSeenVersion { get; set; } = string.Empty;
+    public DateTimeOffset? UpdateFirstSeenUtc { get; set; }
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

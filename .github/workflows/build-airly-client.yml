@@ -3,7 +3,7 @@ name: Build Airly Client
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, feature/modern-flight-tracking]
     paths:
       - "client/AirlyClient/**"
       - "installer/**"

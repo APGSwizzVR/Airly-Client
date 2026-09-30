@@ -1,0 +1,40 @@
+name: Release Airly Client
+
+on:
+  push:
+    tags:
+      - "client-v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace "^client-v", ""
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Publish EXE
+        run: dotnet publish client/AirlyClient/AirlyClient.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o publish
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Build installer
+        shell: pwsh
+        run: iscc "/dMyAppVersion=${{ steps.version.outputs.version }}" installer/AirlyClient.iss
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Airly Client ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            publish/AirlyClient.exe
+            installer-output/Airly-Client-Setup.exe

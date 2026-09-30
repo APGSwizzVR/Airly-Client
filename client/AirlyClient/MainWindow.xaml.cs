@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Controls;
@@ -14,6 +15,7 @@ using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Microsoft.Web.WebView2.Wpf;
 using AirlyClient.Network;
 
 namespace AirlyClient;
@@ -22,7 +24,6 @@ public partial class MainWindow : Window
 {
     private readonly HttpClient _http = new();
     private readonly AirportDataService _airportData;
-    private readonly ObservableCollection<AircraftState> _traffic = new();
     private readonly ObservableCollection<TrackedFlight> _trackedFlights = new();
     private readonly AppSettings _settings;
     private bool _connected;
@@ -30,6 +31,12 @@ public partial class MainWindow : Window
     private SimBriefFlightPlan? _flightPlan;
     private readonly DispatcherTimer _metricsTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly ModelMatchingInstaller _modelInstaller;
+    private readonly UpdateService _updateService;
+    private readonly List<TrackerAircraft> _liveAircraft = new();
+    private readonly DispatcherTimer _trackingTimer = new() { Interval = TimeSpan.FromSeconds(15) };
+    private bool _trackingRequestRunning;
+    private UpdateInfo? _availableUpdate;
+    private bool _updatePromptShown;
     private string? _communityFolder;
     private bool _metricsRequestRunning;
     private int _renderFrames;
@@ -41,28 +48,151 @@ public partial class MainWindow : Window
         _settings = AppSettings.Load();
         _airportData = new AirportDataService(_http);
         _modelInstaller = new ModelMatchingInstaller(_http);
-        TrafficGrid.ItemsSource = _traffic;
+        _updateService = new UpdateService(_http);
         TrackingGrid.ItemsSource = _trackedFlights;
         LoadSettingsIntoUi();
         InitializeTheme();
         LoadDemoUiState();
         InitializeClientMetrics();
+        _ = InitializeTrackingMapAsync();
         InitializeModelMatching();
-        RefreshTracking();
+        TrackingGrid.ItemsSource = _trackedFlights;
+        _trackingTimer.Tick += async (_, _) => await RefreshLiveTrackingAsync();
+        _trackingTimer.Start();
+        _ = RefreshLiveTrackingAsync();
         Closed += (_, _) => _settings.Save();
         Closed += (_, _) => CompositionTarget.Rendering -= CompositionTarget_Rendering;
+        Closed += (_, _) => _trackingTimer.Stop();
+        VersionLabel.Text = "Airly Client " + ClientConfig.Version;
         AddAiMessage("Airly AI", "Ask me about flight planning, ATC, aircraft systems, meteorology, navigation, procedures or aviation calculations. If it is unrelated to aviation, I’ll keep us on topic.");
+        Loaded += async (_, _) => await CheckForUpdatesAsync();
     }
 
     private void AddAiMessage(string sender, string message)
     {
-        var border = new Border { Background = sender == "You" ? System.Windows.Media.Brushes.Transparent : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(16,27,45)), BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(38,55,80)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(7), Padding = new Thickness(12), Margin = new Thickness(0,0,0,8) };
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 18) };
+        var bubble = new Border
+        {
+            Background = sender == "You" ? new SolidColorBrush(Color.FromRgb(38, 49, 61)) : Brushes.Transparent,
+            BorderBrush = sender == "You" ? new SolidColorBrush(Color.FromRgb(54, 68, 82)) : Brushes.Transparent,
+            BorderThickness = sender == "You" ? new Thickness(1) : new Thickness(0),
+            CornerRadius = new CornerRadius(16),
+            Padding = sender == "You" ? new Thickness(15, 11, 15, 11) : new Thickness(0),
+            MaxWidth = 850,
+            HorizontalAlignment = sender == "You" ? HorizontalAlignment.Right : HorizontalAlignment.Left
+        };
         var stack = new StackPanel();
-        stack.Children.Add(new TextBlock { Text = sender.ToUpperInvariant(), FontSize = 9, FontWeight = FontWeights.Bold, Foreground = sender == "You" ? System.Windows.Media.Brushes.LightSkyBlue : System.Windows.Media.Brushes.LightGray });
-        stack.Children.Add(new TextBlock { Text = message, FontSize = 12, Foreground = System.Windows.Media.Brushes.White, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0,5,0,0) });
-        border.Child = stack;
-        AiMessages.Children.Add(border);
+        stack.Children.Add(new TextBlock
+        {
+            Text = sender == "You" ? "You" : "Airly AI",
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = sender == "You" ? new SolidColorBrush(Color.FromRgb(192, 207, 222)) : (Brush)FindResource("AccentBrush"),
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+        if (sender == "You")
+            stack.Children.Add(new TextBlock { Text = message, FontSize = 13, Foreground = (Brush)FindResource("TextBrush"), TextWrapping = TextWrapping.Wrap });
+        else
+            stack.Children.Add(RenderAiMarkdown(message));
+        bubble.Child = stack;
+        row.Children.Add(bubble);
+        AiMessages.Children.Add(row);
         AiScroll.ScrollToEnd();
+    }
+
+    private StackPanel RenderAiMarkdown(string markdown)
+    {
+        var panel = new StackPanel();
+        var inCode = false;
+        var code = new List<string>();
+        foreach (var raw in markdown.Replace("\r\n", "\n").Split('\n'))
+        {
+            var line = raw.TrimEnd();
+            if (line.Trim().StartsWith(new string('\x60', 3), StringComparison.Ordinal))
+            {
+                if (inCode)
+                {
+                    panel.Children.Add(new Border
+                    {
+                        Background = new SolidColorBrush(Color.FromRgb(17, 20, 24)),
+                        CornerRadius = new CornerRadius(8),
+                        Padding = new Thickness(12),
+                        Margin = new Thickness(0, 5, 0, 10),
+                        Child = new TextBlock
+                        {
+                            Text = string.Join(Environment.NewLine, code),
+                            FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+                            FontSize = 12,
+                            Foreground = (Brush)FindResource("TextBrush"),
+                            TextWrapping = TextWrapping.Wrap
+                        }
+                    });
+                    code.Clear();
+                    inCode = false;
+                }
+                else inCode = true;
+                continue;
+            }
+            if (inCode) { code.Add(line); continue; }
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                panel.Children.Add(new Border { Height = 5, Background = Brushes.Transparent });
+                continue;
+            }
+
+            var text = line.TrimStart();
+            var heading = 0;
+            while (heading < text.Length && heading < 3 && text[heading] == '#') heading++;
+            if (heading > 0 && heading < text.Length && text[heading] == ' ')
+            {
+                panel.Children.Add(CreateMarkdownText(text[(heading + 1)..], 18 - heading, FontWeights.SemiBold, new Thickness(0, 8, 0, 4)));
+                continue;
+            }
+            if (text.StartsWith("> "))
+            {
+                panel.Children.Add(CreateMarkdownText(text[2..], 13, FontWeights.Normal, new Thickness(12, 2, 0, 8)));
+                continue;
+            }
+            var bullet = text.StartsWith("- ") || text.StartsWith("* ");
+            var numbered = Regex.IsMatch(text, @"^\d+\.\s+");
+            if (bullet || numbered)
+            {
+                var content = bullet ? text[2..] : Regex.Replace(text, @"^\d+\.\s+", string.Empty);
+                var prefix = bullet ? "• " : Regex.Match(text, @"^\d+\.").Value + " ";
+                panel.Children.Add(CreateMarkdownText(prefix + content, 13, FontWeights.Normal, new Thickness(4, 2, 0, 5)));
+                continue;
+            }
+            panel.Children.Add(CreateMarkdownText(line, 13, FontWeights.Normal, new Thickness(0, 0, 0, 7)));
+        }
+        return panel;
+    }
+
+    private TextBlock CreateMarkdownText(string text, double size, FontWeight weight, Thickness margin)
+    {
+        var block = new TextBlock
+        {
+            FontSize = size,
+            FontWeight = weight,
+            Foreground = (Brush)FindResource("TextBrush"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = margin
+        };
+        var pattern = new Regex(@"(\*\*.+?\*\*|\x60.+?\x60|\*.+?\*)");
+        var index = 0;
+        foreach (Match match in pattern.Matches(text))
+        {
+            if (match.Index > index) block.Inlines.Add(new Run(text[index..match.Index]));
+            var value = match.Value;
+            if (value.StartsWith("**", StringComparison.Ordinal) && value.EndsWith("**", StringComparison.Ordinal))
+                block.Inlines.Add(new Bold(new Run(value[2..^2])));
+            else if (value.StartsWith(new string('\x60', 1), StringComparison.Ordinal) && value.EndsWith(new string('\x60', 1), StringComparison.Ordinal))
+                block.Inlines.Add(new Run(value[1..^1]) { FontFamily = new System.Windows.Media.FontFamily("Consolas") });
+            else if (value.StartsWith("*", StringComparison.Ordinal) && value.EndsWith("*", StringComparison.Ordinal))
+                block.Inlines.Add(new Italic(new Run(value[1..^1])));
+            index = match.Index + match.Length;
+        }
+        if (index < text.Length) block.Inlines.Add(new Run(text[index..]));
+        return block;
     }
 
     private async void AiAsk_Click(object sender, RoutedEventArgs e)
@@ -113,9 +243,18 @@ public partial class MainWindow : Window
     {
         if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None)
         {
-            e.Handled = true;
             AiAsk_Click(sender, new RoutedEventArgs());
+            e.Handled = true;
         }
+    }
+
+    private void Window_PreviewTextInput(object sender, TextCompositionEventArgs e)
+    {
+        if (AiHelperView.Visibility != Visibility.Visible || AiInput.IsKeyboardFocusWithin) return;
+        AiInput.Focus();
+        AiInput.CaretIndex = AiInput.Text.Length;
+        AiInput.AppendText(e.Text);
+        e.Handled = true;
     }
 
     private void LoadSettingsIntoUi()
@@ -302,7 +441,7 @@ public partial class MainWindow : Window
         var name = (sender as Button)?.Tag?.ToString() ?? "Dashboard";
         var views = new Dictionary<string, UIElement>
         {
-            ["Dashboard"] = DashboardView, ["Connect"] = ConnectView, ["Traffic"] = TrafficView, ["AiHelper"] = AiHelperView,
+            ["Dashboard"] = DashboardView, ["Connect"] = ConnectView, ["AiHelper"] = AiHelperView,
             ["Tracking"] = TrackingView, ["Frequencies"] = FrequenciesView, ["Weather"] = WeatherView,
             ["Charts"] = ChartsView, ["FlightPlan"] = FlightPlanView, ["Models"] = ModelsView, ["Settings"] = SettingsView
         };
@@ -333,7 +472,7 @@ public partial class MainWindow : Window
         };
         PageSubtitle.Text = name switch
         {
-            "Tracking" => "Search and inspect aircraft on the Airly network",
+            "Tracking" => "Live aircraft positions on a satellite map",
             "FlightPlan" => "Import the latest operational flight plan from SimBrief",
             "Frequencies" => "Controller positions and authenticated frequency audio",
             "Weather" => "Airport weather and METAR information",
@@ -341,6 +480,7 @@ public partial class MainWindow : Window
             "AiHelper" => "A focused assistant for aviation questions and calculations",
             _ => "Flight simulation network operations"
         };
+        if (name == "AiHelper") Dispatcher.BeginInvoke(() => AiInput.Focus());
     }
 
     private async void Connect_Click(object sender, RoutedEventArgs e)
@@ -391,7 +531,7 @@ public partial class MainWindow : Window
         NetworkStatus.Text = connected ? "Online" : "Offline";
         OwnAircraft.Text = connected ? "Ready" : "Offline";
         ConnectButton.Content = connected ? "Disconnect" : "Connect";
-        TrafficCount.Text = _traffic.Count.ToString();
+        TrafficCount.Text = _liveAircraft.Count.ToString();
         ActivityText.Text = connected
             ? "Connected. Traffic, ATC, voice and simulator state can synchronize through the Airly realtime service."
             : "Connect to Airly to receive live traffic, ATC and network data.";
@@ -458,31 +598,92 @@ public partial class MainWindow : Window
     private void RefreshTracking()
     {
         _trackedFlights.Clear();
-
-        foreach (var aircraft in _traffic)
+        foreach (var aircraft in _liveAircraft)
         {
-            var planMatches = _flightPlan is not null &&
-                              string.Equals(aircraft.Callsign, _flightPlan.Callsign, StringComparison.OrdinalIgnoreCase);
-
+            var planMatches = _flightPlan is not null && string.Equals(aircraft.Callsign, _flightPlan.Callsign, StringComparison.OrdinalIgnoreCase);
             _trackedFlights.Add(new TrackedFlight(
-                aircraft.Callsign,
-                aircraft.ModelCode,
+                aircraft.Callsign ?? aircraft.Icao24, aircraft.Aircraft,
                 planMatches ? _flightPlan!.Registration : string.Empty,
                 planMatches ? _flightPlan!.Origin : "—",
                 planMatches ? _flightPlan!.Destination : "—",
                 planMatches ? _flightPlan!.RouteSummary : "—",
-                aircraft.Latitude,
-                aircraft.Longitude,
-                aircraft.AltitudeFeet,
-                aircraft.GroundSpeedKnots,
-                aircraft.HeadingDegrees,
-                aircraft.VerticalSpeedFeetPerMinute,
+                aircraft.Latitude!.Value, aircraft.Longitude!.Value,
+                aircraft.AltitudeFeet ?? 0, aircraft.GroundSpeedKnots,
+                aircraft.HeadingDegrees, aircraft.VerticalSpeedFeetPerMinute,
                 planMatches ? _flightPlan!.CruiseAltitudeFeet : 0,
-                aircraft.Frequency ?? "—",
-                aircraft.VerticalSpeedFeetPerMinute > 300 ? "CLIMB" : aircraft.VerticalSpeedFeetPerMinute < -300 ? "DESCENT" : "CRUISE",
-                string.Empty,
-                BuildJetPhotosSearchUrl(planMatches ? _flightPlan!.Registration : aircraft.Callsign)));
+                "—",
+                aircraft.VerticalSpeedFeetPerMinute > 300 ? "CLIMB" : aircraft.VerticalSpeedFeetPerMinute < -300 ? "DESCENT" : aircraft.OnGround ? "GROUND" : "CRUISE",
+                string.Empty, BuildJetPhotosSearchUrl(planMatches ? _flightPlan!.Registration : aircraft.Callsign),
+                aircraft.Country, aircraft.OnGround, aircraft.Icao24, aircraft.LastContact));
         }
+        TrackingGrid.ItemsSource = _trackedFlights;
+        TrafficCount.Text = _liveAircraft.Count.ToString();
+        _ = UpdateTrackingMapAsync();
+    }
+
+    private async Task RefreshLiveTrackingAsync()
+    {
+        if (_trackingRequestRunning) return;
+        _trackingRequestRunning = true;
+        try
+        {
+            using var response = await _http.GetAsync(ClientConfig.ApiBaseUrl + "api/tracker", HttpCompletionOption.ResponseHeadersRead);
+            if (!response.IsSuccessStatusCode)
+            {
+                ActivityText.Text = "Live tracker unavailable (HTTP " + (int)response.StatusCode + ").";
+                return;
+            }
+            var payload = await response.Content.ReadFromJsonAsync<TrackerResponse>();
+            _liveAircraft.Clear();
+            if (payload?.Aircraft is not null)
+                _liveAircraft.AddRange(payload.Aircraft.Where(a => a.Latitude is not null && a.Longitude is not null));
+            RefreshTracking();
+            try
+            {
+                var network = await _http.GetFromJsonAsync<NetworkStatusResponse>(ClientConfig.ApiBaseUrl + "api/network/status");
+                ControllerCount.Text = (network?.Controllers ?? 0).ToString();
+                ActivityText.Text = "Live tracker: " + _liveAircraft.Count + " aircraft. Controller positions: " + (network?.Controllers ?? 0) + ".";
+            }
+            catch { ActivityText.Text = "Live tracker: " + _liveAircraft.Count + " aircraft. Network controller status unavailable."; }
+        }
+        catch (Exception ex) { ActivityText.Text = "Live tracker unavailable: " + ex.Message; }
+        finally { _trackingRequestRunning = false; }
+    }
+
+    private async Task InitializeTrackingMapAsync()
+    {
+        try
+        {
+            await TrackingMap.EnsureCoreWebView2Async();
+            TrackingMap.NavigateToString("""
+<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>html,body,#map{height:100%;width:100%;margin:0;background:#10151a;overflow:hidden}.leaflet-control-zoom a{background:#151b22!important;color:#f2f5f7!important;border-color:#303943!important}.leaflet-control-attribution{background:rgba(8,11,15,.82)!important;color:#d2d7dc!important}.leaflet-control-attribution a{color:#b8c8d8}.plane{font-size:23px;line-height:28px;width:28px;height:28px;text-align:center;color:#fff;text-shadow:0 1px 4px #000;transform-origin:center}</style>
+</head><body><div id="map"></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
+const map=L.map('map',{zoomControl:true,preferCanvas:true}).setView([53.35,-6.26],6);
+L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Esri, Maxar, Earthstar Geographics, and the GIS User Community'}).addTo(map);
+const markers=new Map();
+function planeIcon(heading){return L.divIcon({className:'airly-plane',html:'<div class="plane" style="transform:rotate('+Number(heading||0)+'deg)">✈</div>',iconSize:[28,28],iconAnchor:[14,14]});}
+window.airlyUpdate=function(data){const seen=new Set();(data||[]).forEach(a=>{if(a.latitude==null||a.longitude==null)return;const key=a.icao24||a.callsign||Math.random().toString();seen.add(key);let m=markers.get(key);const pos=[Number(a.latitude),Number(a.longitude)];if(!m){m=L.marker(pos,{icon:planeIcon(a.headingDegrees)}).addTo(map);markers.set(key,m)}else{m.setLatLng(pos);const el=m.getElement();const plane=el&&el.querySelector('.plane');if(plane)plane.style.transform='rotate('+Number(a.headingDegrees||0)+'deg)'}const call=(a.callsign||'UNKNOWN').trim()||'UNKNOWN';const alt=a.altitudeFeet==null?'—':Math.round(a.altitudeFeet).toLocaleString()+' ft';const spd=a.groundSpeedKnots==null?'—':Math.round(a.groundSpeedKnots)+' kt';m.bindTooltip(call+' · '+alt+' · '+spd,{direction:'top',offset:[0,-12]});m.bindPopup('<b>'+call+'</b><br>'+alt+'<br>'+spd)});markers.forEach((m,key)=>{if(!seen.has(key)){map.removeLayer(m);markers.delete(key)}})};
+window.airlyFocus=function(callsign){const target=String(callsign||'').trim().toUpperCase();markers.forEach(m=>{const tip=m.getTooltip();if(tip&&tip.getContent().toUpperCase().startsWith(target+' ·')){map.setView(m.getLatLng(),Math.max(map.getZoom(),8),{animate:true});m.openPopup()}})};
+window.addEventListener('resize',()=>map.invalidateSize());
+</script></body></html>
+""");
+            await UpdateTrackingMapAsync();
+        }
+        catch (Exception ex) { ActivityText.Text = "Satellite map unavailable: " + ex.Message; }
+    }
+
+    private async Task UpdateTrackingMapAsync()
+    {
+        if (TrackingMap.CoreWebView2 is null) return;
+        await TrackingMap.ExecuteScriptAsync("window.airlyUpdate(" + JsonSerializer.Serialize(_liveAircraft) + ");");
+    }
+
+    private async Task FocusTrackingMapAsync(string callsign)
+    {
+        if (TrackingMap.CoreWebView2 is null) return;
+        await TrackingMap.ExecuteScriptAsync("window.airlyFocus(" + JsonSerializer.Serialize(callsign) + ");");
     }
 
     private void TrackingSearch_TextChanged(object sender, TextChangedEventArgs e)
@@ -516,8 +717,9 @@ public partial class MainWindow : Window
 
         TrackCallsign.Text = _selectedFlight.Callsign;
         TrackAircraft.Text = string.IsNullOrWhiteSpace(_selectedFlight.Registration)
-            ? _selectedFlight.Aircraft
-            : $"{_selectedFlight.Aircraft} • {_selectedFlight.Registration}";
+            ? _selectedFlight.Aircraft + " • " + _selectedFlight.Country
+            : _selectedFlight.Aircraft + " • " + _selectedFlight.Registration + " • " + _selectedFlight.Country;
+        _ = FocusTrackingMapAsync(_selectedFlight.Callsign);
         TrackRoute.Text = $"{_selectedFlight.Origin} → {_selectedFlight.Destination}";
         TrackPosition.Text = $"{_selectedFlight.Latitude:F4}, {_selectedFlight.Longitude:F4}";
         TrackHeading.Text = $"{_selectedFlight.HeadingDegrees:000}°";
@@ -536,6 +738,37 @@ public partial class MainWindow : Window
         var url = (sender as Button)?.Tag?.ToString();
         if (!string.IsNullOrWhiteSpace(url))
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+    }
+
+    private async void OverviewAirportSearch_Click(object sender, RoutedEventArgs e)
+    {
+        var query = OverviewAirportBox.Text.Trim();
+        if (query.Length < 2) { OverviewAirportName.Text = "Enter an airport name, ICAO or IATA code."; return; }
+        try
+        {
+            var matches = await _airportData.SearchAirportsAsync(query);
+            OverviewAirportBox.ItemsSource = matches;
+            if (matches.Count == 0) { OverviewAirportName.Text = "No airport found"; OverviewAirportMeta.Text = query.ToUpperInvariant(); return; }
+            OverviewAirportBox.SelectedItem = matches[0];
+            await LoadOverviewAirportAsync(matches[0].Icao ?? matches[0].Ident ?? query);
+        }
+        catch (Exception ex) { OverviewAirportName.Text = "Airport search unavailable"; OverviewAirportMeta.Text = ex.Message; }
+    }
+
+    private async Task LoadOverviewAirportAsync(string code)
+    {
+        var airport = await _airportData.GetAirportAsync(code);
+        if (airport is null) { OverviewAirportName.Text = "Airport not found"; return; }
+        OverviewAirportName.Text = airport.Name ?? airport.Icao ?? airport.Ident ?? code;
+        OverviewAirportMeta.Text = string.Join("  ·  ", new[] { airport.Icao ?? airport.Ident, airport.Iata, airport.Type }.Where(v => !string.IsNullOrWhiteSpace(v)));
+        OverviewAirportLocation.Text = string.Join("  ·  ", new[] { airport.Municipality, airport.Country, airport.Latitude.ToString("0.0000") + ", " + airport.Longitude.ToString("0.0000"), airport.ScheduledService ? "Scheduled service" : "No scheduled service" }.Where(v => !string.IsNullOrWhiteSpace(v)));
+        OverviewAirportElevation.Text = airport.ElevationFt is double elevation ? Math.Round(elevation).ToString("N0") + " ft" : "—";
+        var frequencies = airport.Frequencies ?? [];
+        var ground = frequencies.FirstOrDefault(f => (f.Type ?? string.Empty).Contains("ground", StringComparison.OrdinalIgnoreCase) || (f.Description ?? string.Empty).Contains("ground", StringComparison.OrdinalIgnoreCase));
+        OverviewAirportGround.Text = ground is null ? "No ground frequency reported" : ground.FrequencyMHz.ToString("0.000") + " MHz";
+        OverviewAirportFrequencies.ItemsSource = frequencies.Where(f => ground is null || !ReferenceEquals(f, ground)).Take(6).Select(f => (f.Type ?? "Other") + "  ·  " + f.FrequencyMHz.ToString("0.000") + " MHz").ToList();
+        OverviewAirportAtc.Text = "No airport-specific controller type is exposed by the current network API.";
+        OverviewAirportSource.Text = "Source: " + (airport.Source ?? "Airly / OurAirports") + (string.IsNullOrWhiteSpace(airport.SourceUpdated) ? string.Empty : "  ·  " + airport.SourceUpdated);
     }
 
     private async void Weather_Click(object sender, RoutedEventArgs e)
@@ -571,6 +804,65 @@ public partial class MainWindow : Window
             MetarText.Text = "Unable to reach the Airly weather service.";
             WeatherDetails.Text = ex.Message;
         }
+    }
+
+    private async Task CheckForUpdatesAsync()
+    {
+        if (_updatePromptShown) return;
+        var update = await _updateService.CheckAsync();
+        if (update is null || !IsNewerVersion(update.Version, ClientConfig.Version)) return;
+        _availableUpdate = update;
+        var now = DateTimeOffset.UtcNow;
+        if (!string.Equals(_settings.UpdateFirstSeenVersion, update.Version, StringComparison.OrdinalIgnoreCase))
+        {
+            _settings.UpdateFirstSeenVersion = update.Version;
+            _settings.UpdateFirstSeenUtc = now;
+            _settings.Save();
+        }
+        var firstSeen = _settings.UpdateFirstSeenUtc ?? now;
+        var mandatory = now - firstSeen >= TimeSpan.FromDays(7);
+        UpdateTitle.Text = string.IsNullOrWhiteSpace(update.Name) ? "Airly Update" : update.Name;
+        UpdateVersion.Text = "Version " + update.Version;
+        UpdateNotes.Text = string.IsNullOrWhiteSpace(update.Notes) ? "A new Airly Client release is available." : update.Notes;
+        UpdateMandatoryText.Text = mandatory ? "This update is now required. Cancel is disabled because the 7-day grace period has expired." : "You can cancel for now. Airly will require this update 7 days after it was first offered.";
+        UpdateCancelButton.IsEnabled = !mandatory;
+        _updatePromptShown = true;
+        UpdateOverlay.Visibility = Visibility.Visible;
+        UpdateOverlayTransform.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(430, 0, TimeSpan.FromMilliseconds(260)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+    }
+
+    private async void UpdateNow_Click(object sender, RoutedEventArgs e)
+    {
+        if (_availableUpdate is null) return;
+        UpdateNowButton.IsEnabled = false;
+        UpdateCancelButton.IsEnabled = false;
+        UpdateNowButton.Content = "Downloading…";
+        var installer = await _updateService.DownloadInstallerAsync(_availableUpdate);
+        if (string.IsNullOrWhiteSpace(installer))
+        {
+            UpdateNowButton.IsEnabled = true;
+            UpdateCancelButton.IsEnabled = true;
+            UpdateNowButton.Content = "Update now";
+            return;
+        }
+        _settings.UpdateFirstSeenVersion = string.Empty;
+        _settings.UpdateFirstSeenUtc = null;
+        _settings.Save();
+        UpdateNowButton.Content = "Restarting…";
+        UpdateService.StartUpdater(installer);
+        Close();
+    }
+
+    private void UpdateCancel_Click(object sender, RoutedEventArgs e)
+    {
+        if (!UpdateCancelButton.IsEnabled) return;
+        UpdateOverlayTransform.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0, 430, TimeSpan.FromMilliseconds(220)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } });
+        UpdateOverlay.Visibility = Visibility.Collapsed;
+    }
+
+    private static bool IsNewerVersion(string remote, string local)
+    {
+        return Version.TryParse(remote.TrimStart('v', 'V'), out var r) && Version.TryParse(local.TrimStart('v', 'V'), out var l) && r > l;
     }
 
     private void InitializeModelMatching()
@@ -751,6 +1043,29 @@ public partial class MainWindow : Window
     private sealed record MetarEnvelope(bool Ok, string? Source, string Icao, DateTimeOffset FetchedAt, List<MetarObservation>? Metar);
     private sealed record MetarObservation(string? IcaoId, string? Name, string? ReportTime, long? ObsTime, double? Temp, double? Dewp, int? Wdir, double? Wspd, double? Wgst, string? Visib, double? Altim, string? WxString, string? FltCat, string? RawOb, List<CloudLayer>? Clouds);
     private sealed record CloudLayer(string? Cover, double? Base);
+
+    private sealed record TrackerResponse(bool Ok, string Provider, long Timestamp, int Count, List<TrackerAircraft>? Aircraft);
+    private sealed record TrackerAircraft(
+        [property: JsonPropertyName("icao24")] string Icao24,
+        [property: JsonPropertyName("callsign")] string? Callsign,
+        [property: JsonPropertyName("originCountry")] string? OriginCountry,
+        [property: JsonPropertyName("latitude")] double? Latitude,
+        [property: JsonPropertyName("longitude")] double? Longitude,
+        [property: JsonPropertyName("altitudeFt")] double? AltitudeFeet,
+        [property: JsonPropertyName("onGround")] bool OnGround,
+        [property: JsonPropertyName("speedKnots")] double? SpeedKnots,
+        [property: JsonPropertyName("heading")] double? Heading,
+        [property: JsonPropertyName("verticalRateFpm")] double? VerticalRateFpm,
+        [property: JsonPropertyName("lastContact")] double? LastContactUnix)
+    {
+        public string Aircraft => "Aircraft";
+        public string Country => string.IsNullOrWhiteSpace(OriginCountry) ? "Unknown" : OriginCountry;
+        public double GroundSpeedKnots => SpeedKnots ?? 0;
+        public double HeadingDegrees => Heading ?? 0;
+        public double VerticalSpeedFeetPerMinute => VerticalRateFpm ?? 0;
+        public DateTimeOffset? LastContact => LastContactUnix is double unix ? DateTimeOffset.FromUnixTimeSeconds((long)unix) : null;
+    }
+    private sealed record NetworkStatusResponse(string Status, string Mode, int Flights, int Controllers, string Voice);
 
     private sealed record ActivationResponse(bool Valid, string Message);
 
