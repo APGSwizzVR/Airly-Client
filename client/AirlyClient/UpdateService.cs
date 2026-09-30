@@ -89,9 +89,6 @@ public sealed class UpdateService
         }
         if (!File.Exists(installerPath)) return;
         try { Process.Start(new ProcessStartInfo { FileName = installerPath, Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /RESTARTAPPLICATIONS", UseShellExecute = true, Verb = "runas" }); } catch { }
-        var self = Environment.ProcessPath;
-        if (!string.IsNullOrWhiteSpace(self))
-            try { Process.Start(new ProcessStartInfo { FileName = "cmd.exe", Arguments = "/c timeout /t 3 /nobreak >nul & del /f /q "" + self + """, CreateNoWindow = true, UseShellExecute = false }); } catch { }
     }
 
     private static string NormalizeVersion(string value)
