@@ -8,6 +8,9 @@
     <AssemblyName>AirlyClient</AssemblyName>
     <RootNamespace>AirlyClient</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <ApplicationIcon Condition="Exists('Assets\Airly.ico')">Assets\Airly.ico</ApplicationIcon>
+    <ApplicationIcon>Assets\Airly.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Content Include="Assets\Airly.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

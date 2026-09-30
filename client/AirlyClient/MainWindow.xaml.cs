@@ -3,6 +3,8 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text;
+using Microsoft.Win32;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -47,6 +49,47 @@ public partial class MainWindow : Window
         RefreshTracking();
         Closed += (_, _) => _settings.Save();
         Closed += (_, _) => CompositionTarget.Rendering -= CompositionTarget_Rendering;
+        AddAiMessage("Airly Helper", "Ask me about flight planning, ATC, aircraft systems, meteorology, navigation, procedures or aviation calculations. If it is unrelated to aviation, I’ll keep us on topic.");
+    }
+
+    private void AddAiMessage(string sender, string message)
+    {
+        var border = new Border { Background = sender == "You" ? System.Windows.Media.Brushes.Transparent : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(16,27,45)), BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(38,55,80)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(7), Padding = new Thickness(12), Margin = new Thickness(0,0,0,8) };
+        var stack = new StackPanel();
+        stack.Children.Add(new TextBlock { Text = sender.ToUpperInvariant(), FontSize = 9, FontWeight = FontWeights.Bold, Foreground = sender == "You" ? System.Windows.Media.Brushes.LightSkyBlue : System.Windows.Media.Brushes.LightGray });
+        stack.Children.Add(new TextBlock { Text = message, FontSize = 12, Foreground = System.Windows.Media.Brushes.White, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0,5,0,0) });
+        border.Child = stack;
+        AiMessages.Children.Add(border);
+        AiScroll.ScrollToEnd();
+    }
+
+    private async void AiAsk_Click(object sender, RoutedEventArgs e)
+    {
+        var question = AiInput.Text.Trim();
+        if (string.IsNullOrWhiteSpace(question)) return;
+        AddAiMessage("You", question);
+        AiInput.Clear();
+        AiStatusText.Text = "Thinking…";
+        try
+        {
+            var payload = new { message = question, attachments = string.IsNullOrWhiteSpace(AiAttachment.Text) || AiAttachment.Text == "No attachment" ? Array.Empty<object>() : new[] { new { name = AiAttachment.Text, content = "Attachment selected in Airly Client" } } };
+            using var response = await _http.PostAsJsonAsync($"{ClientConfig.ApiBaseUrl}api/ai/helper", payload);
+            var result = await response.Content.ReadFromJsonAsync<AiHelperResponse>();
+            AddAiMessage("Airly Helper", result?.reply ?? "The aviation helper service did not return a response.");
+            AiStatusText.Text = response.IsSuccessStatusCode ? "Ready" : "Service unavailable";
+        }
+        catch (Exception ex) { AddAiMessage("Airly Helper", $"I could not reach the helper service: {ex.Message}"); AiStatusText.Text = "Offline"; }
+    }
+
+    private void AiEmoji_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.Tag is string emoji) { AiInput.SelectedText = emoji; AiInput.CaretIndex += emoji.Length; AiInput.Focus(); }
+    }
+
+    private void AiFile_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog { Multiselect = false, Filter = "Aviation data|*.txt;*.csv;*.json;*.xml;*.log|All files|*.*" };
+        if (dialog.ShowDialog() == true) { AiAttachment.Text = System.IO.Path.GetFileName(dialog.FileName); }
     }
 
     private void LoadSettingsIntoUi()
@@ -117,7 +160,7 @@ public partial class MainWindow : Window
         var name = (sender as Button)?.Tag?.ToString() ?? "Dashboard";
         var views = new Dictionary<string, UIElement>
         {
-            ["Dashboard"] = DashboardView, ["Connect"] = ConnectView, ["Traffic"] = TrafficView,
+            ["Dashboard"] = DashboardView, ["Connect"] = ConnectView, ["Traffic"] = TrafficView, ["AiHelper"] = AiHelperView,
             ["Tracking"] = TrackingView, ["Frequencies"] = FrequenciesView, ["Weather"] = WeatherView,
             ["Charts"] = ChartsView, ["FlightPlan"] = FlightPlanView, ["Models"] = ModelsView, ["Settings"] = SettingsView
         };
@@ -138,7 +181,7 @@ public partial class MainWindow : Window
         {
             "Dashboard" => "Overview", "Tracking" => "Track Flights", "FlightPlan" => "Flight Plan",
             "Frequencies" => "ATC Frequencies", "Weather" => "Weather / METAR", "Charts" => "Charts",
-            "Models" => "Model Matching", _ => name
+            "Models" => "Model Matching", "AiHelper" => "Aviation Helper", _ => name
         };
         PageEyebrow.Text = name switch
         {
@@ -153,6 +196,7 @@ public partial class MainWindow : Window
             "Frequencies" => "Controller positions and authenticated frequency audio",
             "Weather" => "Airport weather and METAR information",
             "Charts" => "Airport and instrument procedure charts",
+            "AiHelper" => "A focused assistant for aviation questions and calculations",
             _ => "Flight simulation network operations"
         };
     }
@@ -576,4 +620,9 @@ public partial class MainWindow : Window
     private sealed record CloudLayer(string? Cover, double? Base);
 
     private sealed record ActivationResponse(bool Valid, string Message);
+
+    private sealed class AiHelperResponse
+    {
+        public string? reply { get; set; }
+    }
 }

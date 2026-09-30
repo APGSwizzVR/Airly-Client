@@ -54,6 +54,7 @@
                     <Button Content="Traffic" Tag="Traffic" Click="Nav_Click" Style="{StaticResource NavButton}"/>
                     <Button Content="Track Flights" Tag="Tracking" Click="Nav_Click" Style="{StaticResource NavButton}"/>
                     <Button Content="Flight Plan" Tag="FlightPlan" Click="Nav_Click" Style="{StaticResource NavButton}"/>
+                    <Button Content="Aviation Helper" Tag="AiHelper" Click="Nav_Click" Style="{StaticResource NavButton}"/>
                     <TextBlock Text="OPERATIONS" FontSize="9" FontWeight="Bold" Foreground="#536B89" Margin="4,20,0,5"/>
                     <Button Content="ATC Frequencies" Tag="Frequencies" Click="Nav_Click" Style="{StaticResource NavButton}"/>
                     <Button Content="Weather / METAR" Tag="Weather" Click="Nav_Click" Style="{StaticResource NavButton}"/>
@@ -166,6 +167,23 @@
                         <TextBlock Text="Airly installs only into the selected Community folder. It does not modify MSFS core files." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,10,0,0" TextWrapping="Wrap"/>
                     </StackPanel></Border>
                 </StackPanel></ScrollViewer></Grid>
+
+                <Grid x:Name="AiHelperView" Visibility="Collapsed">
+                    <Grid>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <Border Background="#101B2D" BorderBrush="#263750" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,12">
+                            <StackPanel><TextBlock Text="AVIATION HELPER" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/><TextBlock Text="Ask about aviation, procedures, weather, aircraft or calculations." FontSize="18" FontWeight="SemiBold" Margin="0,5,0,0"/><TextBlock Text="The helper stays focused on aviation topics. Maths is supported when it is part of an aviation calculation." FontSize="11" Foreground="{StaticResource MutedBrush}" Margin="0,5,0,0"/></StackPanel>
+                        </Border>
+                        <Border Grid.Row="1" Background="#0D1728" BorderBrush="#263750" BorderThickness="1" CornerRadius="8" Padding="16">
+                            <ScrollViewer x:Name="AiScroll" VerticalScrollBarVisibility="Auto"><StackPanel x:Name="AiMessages"/></ScrollViewer>
+                        </Border>
+                        <Grid Grid.Row="2" Margin="0,12,0,0">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8"><Button Content="😀" Tag="😀" Click="AiEmoji_Click" Width="38" Height="30" Style="{StaticResource SecondaryButton}"/><Button Content="✈" Tag="✈" Click="AiEmoji_Click" Width="38" Height="30" Margin="6,0,0,0" Style="{StaticResource SecondaryButton}"/><Button Content="📎 Upload" Click="AiFile_Click" Width="90" Height="30" Margin="6,0,0,0" Style="{StaticResource SecondaryButton}"/><TextBlock x:Name="AiAttachment" Text="No attachment" VerticalAlignment="Center" Foreground="{StaticResource MutedBrush}" FontSize="10" Margin="10,0,0,0"/></StackPanel>
+                            <Grid Grid.Row="1"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="105"/></Grid.ColumnDefinitions><TextBox x:Name="AiInput" MinHeight="72" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" ToolTip="Ask an aviation question..."/><Button Grid.Column="1" Content="Ask" Height="72" Margin="10,0,0,0" Click="AiAsk_Click" Style="{StaticResource PrimaryButton}"/></Grid>
+                        </Grid>
+                    </Grid>
+                </Grid>
 
                 <Grid x:Name="SettingsView" Visibility="Collapsed"><Border Style="{StaticResource Card}"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel MaxWidth="760"><TextBlock Text="Settings" Style="{StaticResource SectionTitle}"/><TextBlock Text="Client preferences are stored locally on this Windows installation." Foreground="{StaticResource MutedBrush}" Margin="0,6,0,10"/><TextBlock Text="SIMBRIEF" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,18,0,0"/><TextBlock Text="Pilot ID" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SimBriefPilotIdBox" Height="36"/><TextBlock Text="Your SimBrief Pilot ID is used only when you explicitly import a flight plan." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,6,0,0"/><TextBlock Text="AIRLY" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,22,0,0"/><TextBlock Text="Airly ID" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SettingsAirlyIdBox" Height="36"/><TextBlock Text="Username" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SettingsUsernameBox" Height="36"/><TextBlock Text="CLIENT" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,22,0,0"/><CheckBox x:Name="StartWithWindowsBox" Content="Start Airly Client with Windows"/><CheckBox x:Name="AutoConnectBox" Content="Automatically connect to Airly"/><CheckBox x:Name="EnableAtcAudioBox" Content="Enable ATC audio" IsChecked="True"/><CheckBox x:Name="EnableMultiplayerBox" Content="Enable multiplayer traffic" IsChecked="True"/><CheckBox x:Name="AutomaticModelMatchingBox" Content="Use automatic model matching" IsChecked="True"/><Button Content="Save settings" Width="125" Height="38" HorizontalAlignment="Left" Margin="0,20,0,0" Click="SaveSettings_Click" Style="{StaticResource PrimaryButton}"/><TextBlock x:Name="SettingsStatus" Foreground="{StaticResource MutedBrush}" Margin="0,10,0,0"/></StackPanel></ScrollViewer></Border></Grid>
             </Grid>
