@@ -13,6 +13,8 @@ public sealed class AppSettings
     public bool EnableAtcAudio { get; set; } = true;
     public bool EnableMultiplayer { get; set; } = true;
     public bool AutomaticModelMatching { get; set; } = true;
+    public string ThemeMode { get; set; } = "Dark";
+    public string AccentColor { get; set; } = "#8A96A3";
 
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),

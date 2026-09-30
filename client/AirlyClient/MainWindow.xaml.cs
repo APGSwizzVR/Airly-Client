@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Net.Http;
 using System.Net.Http.Json;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 using System.Text.Json;
 using System.Windows;
@@ -42,6 +43,7 @@ public partial class MainWindow : Window
         TrafficGrid.ItemsSource = _traffic;
         TrackingGrid.ItemsSource = _trackedFlights;
         LoadSettingsIntoUi();
+        InitializeTheme();
         LoadDemoUiState();
         InitializeClientMetrics();
         InitializeModelMatching();
@@ -49,7 +51,7 @@ public partial class MainWindow : Window
         RefreshTracking();
         Closed += (_, _) => _settings.Save();
         Closed += (_, _) => CompositionTarget.Rendering -= CompositionTarget_Rendering;
-        AddAiMessage("Airly Helper", "Ask me about flight planning, ATC, aircraft systems, meteorology, navigation, procedures or aviation calculations. If it is unrelated to aviation, I’ll keep us on topic.");
+        AddAiMessage("Airly AI", "Ask me about flight planning, ATC, aircraft systems, meteorology, navigation, procedures or aviation calculations. If it is unrelated to aviation, I’ll keep us on topic.");
     }
 
     private void AddAiMessage(string sender, string message)
@@ -104,7 +106,123 @@ public partial class MainWindow : Window
         EnableAtcAudioBox.IsChecked = _settings.EnableAtcAudio;
         EnableMultiplayerBox.IsChecked = _settings.EnableMultiplayer;
         AutomaticModelMatchingBox.IsChecked = _settings.AutomaticModelMatching;
+        _settings.ThemeMode = string.Equals(_settings.ThemeMode, "Bright", StringComparison.OrdinalIgnoreCase) ? "Bright" : "Dark";
     }
+
+    private static readonly (string Name, string Hex)[] DarkPalette =
+    {
+        ("Default", "#8A96A3"), ("Ocean", "#36A3FF"), ("Aurora", "#45D6C5"), ("Violet", "#A78BFA"),
+        ("Rose", "#FB7185"), ("Amber", "#F4B740"), ("Emerald", "#42C98A"), ("Glacier", "#6ED0F0"),
+        ("Coral", "#FF8A65"), ("Silver", "#B8C7D9")
+    };
+
+    private static readonly (string Name, string Hex)[] BrightPalette =
+    {
+        ("Default", "#5C6670"), ("Ocean", "#075EAA"), ("Teal", "#087F8C"), ("Violet", "#6842B8"),
+        ("Rose", "#C43D61"), ("Amber", "#996000"), ("Emerald", "#167447"), ("Sky", "#176D9C"),
+        ("Coral", "#B84427"), ("Slate", "#475569")
+    };
+
+    private void InitializeTheme()
+    {
+        ThemeModeBox.SelectedItem = ThemeModeBox.Items
+            .OfType<ComboBoxItem>()
+            .FirstOrDefault(item => string.Equals(item.Content?.ToString(), _settings.ThemeMode, StringComparison.OrdinalIgnoreCase))
+            ?? ThemeModeBox.Items[0];
+
+        PopulateAccentPalette(_settings.ThemeMode, _settings.AccentColor);
+        ApplyTheme();
+    }
+
+    private void ThemeModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsInitialized || ThemeModeBox.SelectedItem is not ComboBoxItem item) return;
+        var mode = item.Content?.ToString() == "Bright" ? "Bright" : "Dark";
+        _settings.ThemeMode = mode;
+        PopulateAccentPalette(mode, null);
+        ApplyTheme();
+    }
+
+    private void AccentColorBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsInitialized || AccentColorBox.SelectedItem is null) return;
+        var hex = ExtractPaletteHex(AccentColorBox.SelectedItem.ToString());
+        if (hex is null) return;
+        _settings.AccentColor = hex;
+        ApplyTheme();
+    }
+
+    private void PopulateAccentPalette(string mode, string? preferredHex)
+    {
+        var palette = string.Equals(mode, "Bright", StringComparison.OrdinalIgnoreCase) ? BrightPalette : DarkPalette;
+        var target = preferredHex;
+        AccentColorBox.Items.Clear();
+
+        foreach (var entry in palette)
+            AccentColorBox.Items.Add($"{entry.Name} — {entry.Hex}");
+
+        var selected = palette.FirstOrDefault(entry =>
+            string.Equals(entry.Hex, target, StringComparison.OrdinalIgnoreCase));
+
+        if (string.IsNullOrWhiteSpace(selected.Hex))
+            selected = palette[0];
+
+        AccentColorBox.SelectedItem = $"{selected.Name} — {selected.Hex}";
+        _settings.AccentColor = selected.Hex;
+    }
+
+    private static string? ExtractPaletteHex(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var marker = value.LastIndexOf('—');
+        if (marker < 0) return null;
+        var hex = value[(marker + 1)..].Trim();
+        return Regex.IsMatch(hex, "^#[0-9A-Fa-f]{6}$") ? hex : null;
+    }
+
+    private static string GetDefaultAccent(string mode) =>
+        string.Equals(mode, "Bright", StringComparison.OrdinalIgnoreCase) ? BrightPalette[0].Hex : DarkPalette[0].Hex;
+
+    private void ApplyTheme()
+    {
+        var bright = string.Equals(_settings.ThemeMode, "Bright", StringComparison.OrdinalIgnoreCase);
+        var accent = ParseColor(_settings.AccentColor, ParseColor(GetDefaultAccent(_settings.ThemeMode), Colors.Gray));
+
+        var window = bright ? "#F3F5F6" : "#0A0D11";
+        var sidebar = bright ? "#FFFFFF" : "#080B0F";
+        var glass = bright ? "#FFFFFF" : "#12171D";
+        var panel = bright ? "#FAFBFC" : "#151B22";
+        var input = bright ? "#F6F8F9" : "#0E1318";
+        var line = bright ? "#D8E0E4" : "#27303A";
+        var text = bright ? "#17232C" : "#F2F5F7";
+        var muted = bright ? "#62717B" : "#9BA7B1";
+        var accentSoft = Color.FromArgb(bright ? (byte)28 : (byte)48, accent.R, accent.G, accent.B);
+
+        SetBrush("WindowBrush", window);
+        SetBrush("SidebarBrush", sidebar);
+        SetBrush("GlassBrush", glass);
+        SetBrush("PanelBrush", panel);
+        SetBrush("InputBrush", input);
+        SetBrush("LineBrush", line);
+        SetBrush("TextBrush", text);
+        SetBrush("MutedBrush", muted);
+        SetBrush("AccentBrush", accent);
+        SetBrush("AccentSoftBrush", accentSoft);
+        SetBrush("SuccessBrush", bright ? "#167447" : "#62C995");
+        SetBrush("DangerBrush", bright ? "#B42318" : "#E68181");
+
+        Background = (Brush)Resources["WindowBrush"];
+        Foreground = (Brush)Resources["TextBrush"];
+    }
+
+    private void SetBrush(string key, string hex) =>
+        Resources[key] = new SolidColorBrush(ParseColor(hex, Colors.Transparent));
+
+    private void SetBrush(string key, Color color) =>
+        Resources[key] = new SolidColorBrush(color);
+
+    private static Color ParseColor(string hex, Color fallback) =>
+        ColorConverter.ConvertFromString(hex) is Color color ? color : fallback;
 
     private void LoadDemoUiState()
     {
@@ -181,7 +299,7 @@ public partial class MainWindow : Window
         {
             "Dashboard" => "Overview", "Tracking" => "Track Flights", "FlightPlan" => "Flight Plan",
             "Frequencies" => "ATC Frequencies", "Weather" => "Weather / METAR", "Charts" => "Charts",
-            "Models" => "Model Matching", "AiHelper" => "Aviation Helper", _ => name
+            "Models" => "Model Matching", "AiHelper" => "Airly AI", _ => name
         };
         PageEyebrow.Text = name switch
         {
@@ -510,6 +628,8 @@ public partial class MainWindow : Window
         _settings.EnableAtcAudio = EnableAtcAudioBox.IsChecked == true;
         _settings.EnableMultiplayer = EnableMultiplayerBox.IsChecked == true;
         _settings.AutomaticModelMatching = AutomaticModelMatchingBox.IsChecked == true;
+        _settings.ThemeMode = ThemeModeBox.SelectedItem is ComboBoxItem themeItem ? themeItem.Content?.ToString() ?? "Dark" : "Dark";
+        _settings.AccentColor = ExtractPaletteHex(AccentColorBox.SelectedItem?.ToString()) ?? GetDefaultAccent(_settings.ThemeMode);
         AirlyIdBox.Text = _settings.AirlyId;
         UsernameBox.Text = _settings.Username;
         _settings.Save();
