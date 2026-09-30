@@ -16,6 +16,9 @@ Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
+#ifexist "..\client\AirlyClient\Assets\Airly.ico"
+SetupIconFile=..\client\AirlyClient\Assets\Airly.ico
+#endif
 
 [Files]
 Source: "..\publish\AirlyClient.exe"; DestDir: "{app}"; Flags: ignoreversion

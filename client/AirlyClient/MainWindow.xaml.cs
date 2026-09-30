@@ -5,6 +5,10 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using AirlyClient.Network;
 
 namespace AirlyClient;
@@ -19,18 +23,29 @@ public partial class MainWindow : Window
     private bool _connected;
     private TrackedFlight? _selectedFlight;
     private SimBriefFlightPlan? _flightPlan;
+    private readonly DispatcherTimer _metricsTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private readonly ModelMatchingInstaller _modelInstaller;
+    private string? _communityFolder;
+    private bool _metricsRequestRunning;
+    private int _renderFrames;
+    private long _lastFpsTick;
 
     public MainWindow()
     {
         InitializeComponent();
         _settings = AppSettings.Load();
         _airportData = new AirportDataService(_http);
+        _modelInstaller = new ModelMatchingInstaller(_http);
         TrafficGrid.ItemsSource = _traffic;
         TrackingGrid.ItemsSource = _trackedFlights;
         LoadSettingsIntoUi();
         LoadDemoUiState();
+        InitializeClientMetrics();
+        InitializeModelMatching();
+        TryLoadApplicationIcon();
         RefreshTracking();
         Closed += (_, _) => _settings.Save();
+        Closed += (_, _) => CompositionTarget.Rendering -= CompositionTarget_Rendering;
     }
 
     private void LoadSettingsIntoUi()
@@ -81,10 +96,19 @@ public partial class MainWindow : Window
         try
         {
             var result = await _airportData.GetChartsAsync(icao);
-            ChartList.ItemsSource = result?.Charts?.Select(c => $"{c.Provider} — {c.Coverage} — {c.Url}").ToList() ?? new List<string>();
+            ChartList.ItemsSource = result?.Charts ?? new List<AirportDataService.ChartSource>();
             ChartStatus.Text = result?.Note ?? "No verified chart source returned.";
+            if (result?.Charts is { Count: > 0 })
+                ChartStatus.Text += $"  {result.Charts.Count} provider source(s) available.";
         }
         catch (Exception ex) { ChartStatus.Text = $"Chart service unavailable: {ex.Message}"; }
+    }
+
+    private void ChartOpen_Click(object sender, RoutedEventArgs e)
+    {
+        var url = (sender as Button)?.Tag?.ToString();
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            Process.Start(new ProcessStartInfo(uri.ToString()) { UseShellExecute = true });
     }
 
     private void Nav_Click(object sender, RoutedEventArgs e)
@@ -104,6 +128,11 @@ public partial class MainWindow : Window
             return;
 
         selected.Visibility = Visibility.Visible;
+        selected.Opacity = 0;
+        selected.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+        });
         PageTitle.Text = name switch
         {
             "Dashboard" => "Overview", "Tracking" => "Track Flights", "FlightPlan" => "Flight Plan",
@@ -327,15 +356,97 @@ public partial class MainWindow : Window
         var icao = AirportSearchBox.Text.Trim().ToUpperInvariant();
         if (icao.Length != 4) { MetarText.Text = "Enter a four-letter ICAO airport code."; return; }
         MetarText.Text = "Loading METAR…";
-
+        WeatherDetails.Text = "";
         try
         {
-            var response = await _http.GetAsync($"{ClientConfig.ApiBaseUrl}api/weather/metar?icao={Uri.EscapeDataString(icao)}");
-            if (!response.IsSuccessStatusCode) { MetarText.Text = "METAR service is not connected yet."; return; }
-            MetarText.Text = await response.Content.ReadAsStringAsync();
-            WeatherDetails.Text = "METAR is served by Airly from AviationWeather.gov. Provider credentials remain server-side.";
+            using var response = await _http.GetAsync($"{ClientConfig.ApiBaseUrl}api/weather/metar?icao={Uri.EscapeDataString(icao)}", HttpCompletionOption.ResponseHeadersRead);
+            if (!response.IsSuccessStatusCode) { MetarText.Text = $"METAR unavailable (HTTP {(int)response.StatusCode})."; return; }
+            var payload = await response.Content.ReadFromJsonAsync<MetarEnvelope>();
+            var observation = payload?.Metar?.FirstOrDefault();
+            if (observation is null) { MetarText.Text = $"No current METAR is available for {icao}."; return; }
+
+            WeatherStation.Text = observation.IcaoId ?? icao;
+            WeatherName.Text = observation.Name ?? "Airport weather station";
+            WeatherCategory.Text = observation.FltCat ?? "—";
+            WeatherObserved.Text = FormatUtcObservation(observation.ReportTime, observation.ObsTime);
+            WeatherWind.Text = FormatWind(observation.Wdir, observation.Wspd, observation.Wgst);
+            WeatherVisibility.Text = string.IsNullOrWhiteSpace(observation.Visib) ? "—" : observation.Visib + " SM";
+            WeatherTemperature.Text = FormatCelsius(observation.Temp);
+            WeatherDewpoint.Text = FormatCelsius(observation.Dewp);
+            WeatherPressure.Text = observation.Altim is null ? "—" : $"{observation.Altim:0.0} hPa";
+            WeatherClouds.Text = FormatClouds(observation.Clouds);
+            WeatherPhenomena.Text = string.IsNullOrWhiteSpace(observation.WxString) ? "No significant weather reported" : observation.WxString;
+            MetarText.Text = observation.RawOb ?? "Raw METAR unavailable";
+            WeatherDetails.Text = $"Observed {FormatUtcObservation(observation.ReportTime, observation.ObsTime)} • {observation.Name ?? icao} • Source: AviationWeather.gov";
         }
-        catch { MetarText.Text = "Unable to reach the Airly weather service."; }
+        catch (Exception ex)
+        {
+            MetarText.Text = "Unable to reach the Airly weather service.";
+            WeatherDetails.Text = ex.Message;
+        }
+    }
+
+    private void InitializeModelMatching()
+    {
+        _communityFolder = ModelMatchingInstaller.FindCommunityFolders().FirstOrDefault();
+        ModelCommunityPath.Text = _communityFolder ?? "No default Community folder found. Use Choose Community.";
+        ModelInstallButton.IsEnabled = !string.IsNullOrWhiteSpace(_communityFolder);
+    }
+
+    private void ChooseCommunity_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Select your Microsoft Flight Simulator Community folder", Multiselect = false };
+        if (dialog.ShowDialog(this) != true) return;
+        var selected = dialog.FolderName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!string.Equals(new DirectoryInfo(selected).Name, "Community", StringComparison.OrdinalIgnoreCase))
+        {
+            ModelStatus.Text = "Select the Community folder itself.";
+            return;
+        }
+        _communityFolder = selected;
+        ModelCommunityPath.Text = selected;
+        ModelInstallButton.IsEnabled = true;
+        ModelStatus.Text = "Community folder selected.";
+    }
+
+    private void OpenCommunity_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(_communityFolder) && Directory.Exists(_communityFolder))
+            Process.Start(new ProcessStartInfo(_communityFolder) { UseShellExecute = true });
+        else
+            ModelStatus.Text = "Select a valid Community folder first.";
+    }
+
+    private async void InstallModels_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_communityFolder))
+        {
+            ChooseCommunity_Click(sender, e);
+            if (string.IsNullOrWhiteSpace(_communityFolder)) return;
+        }
+
+        ModelInstallButton.IsEnabled = false;
+        ModelProgressBar.Visibility = Visibility.Visible;
+        ModelProgressBar.Value = 0;
+        ModelProgressText.Text = "Preparing FSLTL download…";
+        ModelStatus.Text = "Downloading the latest FSLTL Traffic Base Models release.";
+        try
+        {
+            var progress = new Progress<double>(value =>
+            {
+                ModelProgressBar.Value = value;
+                ModelProgressText.Text = value >= 99.9 ? "Extracting and installing into Community…" : $"Downloading… {value:0}%";
+            });
+            var installedPath = await _modelInstaller.InstallLatestFslTlAsync(_communityFolder!, progress);
+            ModelProgressText.Text = "Installation complete.";
+            ModelStatus.Text = $"FSLTL model package installed: {installedPath}";
+        }
+        catch (Exception ex)
+        {
+            ModelProgressText.Text = "";
+            ModelStatus.Text = $"Model matching install failed: {ex.Message}";
+        }
+        finally { ModelInstallButton.IsEnabled = true; }
     }
 
     private void SaveSettings_Click(object sender, RoutedEventArgs e)
@@ -359,6 +470,94 @@ public partial class MainWindow : Window
         _settings.Save();
     }
 
+    private void InitializeClientMetrics()
+    {
+        _lastFpsTick = Stopwatch.GetTimestamp();
+        CompositionTarget.Rendering += CompositionTarget_Rendering;
+        _metricsTimer.Tick += async (_, _) => await UpdateLatencyAsync();
+        _metricsTimer.Start();
+        _ = UpdateLatencyAsync();
+    }
+
+    private void CompositionTarget_Rendering(object? sender, EventArgs e)
+    {
+        _renderFrames++;
+        var now = Stopwatch.GetTimestamp();
+        var elapsed = (now - _lastFpsTick) / (double)Stopwatch.Frequency;
+        if (elapsed >= 1)
+        {
+            var fps = _renderFrames / elapsed;
+            _renderFrames = 0;
+            _lastFpsTick = now;
+            FpsText.Text = $"  •  FPS {fps:0}";
+            HeaderFpsText.Text = $"  •  FPS {fps:0}";
+        }
+    }
+
+    private async Task UpdateLatencyAsync()
+    {
+        if (_metricsRequestRunning) return;
+        _metricsRequestRunning = true;
+        try
+        {
+            var stopwatch = Stopwatch.StartNew();
+            using var response = await _http.GetAsync($"{ClientConfig.ApiBaseUrl}api/ping", HttpCompletionOption.ResponseHeadersRead);
+            stopwatch.Stop();
+            if (response.IsSuccessStatusCode)
+            {
+                var value = $"{stopwatch.Elapsed.TotalMilliseconds:0} ms";
+                LatencyText.Text = $"Latency {value}";
+                HeaderLatencyText.Text = $"LATENCY {value}";
+            }
+            else
+            {
+                LatencyText.Text = "Latency —";
+                HeaderLatencyText.Text = "LATENCY —";
+            }
+        }
+        catch
+        {
+            LatencyText.Text = "Latency —";
+            HeaderLatencyText.Text = "LATENCY —";
+        }
+        finally { _metricsRequestRunning = false; }
+    }
+
+    private void TryLoadApplicationIcon()
+    {
+        try
+        {
+            var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Airly.ico");
+            if (File.Exists(iconPath))
+                Icon = new BitmapImage(new Uri(iconPath, UriKind.Absolute));
+        }
+        catch { }
+    }
+
+    private static string FormatUtcObservation(string? reportTime, long? obsTime)
+    {
+        if (DateTimeOffset.TryParse(reportTime, out var parsed)) return parsed.UtcDateTime.ToString("dd MMM HH:mm'Z'");
+        if (obsTime is long unix) return DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime.ToString("dd MMM HH:mm'Z'");
+        return "Observation time unavailable";
+    }
+
+    private static string FormatWind(int? direction, double? speed, double? gust)
+    {
+        if (direction is null && speed is null) return "—";
+        var dir = direction is null ? "VRB" : direction.Value.ToString("000") + "°";
+        var text = $"{dir} {speed.GetValueOrDefault():0} kt";
+        if (gust is > 0) text += $" G{gust:0}";
+        return text;
+    }
+
+    private static string FormatCelsius(double? value) => value is null ? "—" : $"{value:0.0} °C";
+
+    private static string FormatClouds(List<CloudLayer>? clouds)
+    {
+        if (clouds is null || clouds.Count == 0) return "Clear / not reported";
+        return string.Join("  •  ", clouds.Select(c => string.IsNullOrWhiteSpace(c.Cover) ? "Cloud layer" : $"{c.Cover} {(c.Base is null ? "" : $"{c.Base:N0} ft")}".Trim()));
+    }
+
     private static string FormatAltitude(double feet)
     {
         if (feet <= 0) return "—";
@@ -370,6 +569,10 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(value)) return "https://www.jetphotos.com/";
         return $"https://www.jetphotos.com/search?keywords={Uri.EscapeDataString(value)}";
     }
+
+    private sealed record MetarEnvelope(bool Ok, string? Source, string Icao, DateTimeOffset FetchedAt, List<MetarObservation>? Metar);
+    private sealed record MetarObservation(string? IcaoId, string? Name, string? ReportTime, long? ObsTime, double? Temp, double? Dewp, int? Wdir, double? Wspd, double? Wgst, string? Visib, double? Altim, string? WxString, string? FltCat, string? RawOb, List<CloudLayer>? Clouds);
+    private sealed record CloudLayer(string? Cover, double? Base);
 
     private sealed record ActivationResponse(bool Valid, string Message);
 }
