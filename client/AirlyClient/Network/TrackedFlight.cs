@@ -17,4 +17,8 @@ public sealed record TrackedFlight(
     string Frequency,
     string Status,
     string PhotoUrl,
-    string PhotoSourceUrl);
+    string PhotoSourceUrl,
+    string Country,
+    bool OnGround,
+    string Icao24,
+    DateTimeOffset? LastContact);
