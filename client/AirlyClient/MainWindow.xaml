@@ -1,9 +1,125 @@
-<Window x:Class="AirlyClient.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Airly Client" Width="760" Height="500" WindowStartupLocation="CenterScreen" Background="#F3F5F7">
-<Grid Margin="42"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-<StackPanel><TextBlock Text="AIRLY" FontSize="15" FontWeight="SemiBold" Foreground="#52606D"/><TextBlock Text="Network Client" FontSize="34" FontWeight="SemiBold" Foreground="#102A43" Margin="0,5,0,0"/><TextBlock Text="Connect your simulator to the Airly network." FontSize="15" Foreground="#627D98" Margin="0,8,0,0"/></StackPanel>
-<Border Grid.Row="1" Background="White" BorderBrush="#D9E2EC" BorderThickness="1" CornerRadius="10" Padding="28" Margin="0,28,0,20"><StackPanel><TextBlock Text="Network connection" FontSize="20" FontWeight="SemiBold" Foreground="#102A43"/>
-<TextBlock Text="Region" Margin="0,22,0,6" Foreground="#486581"/><ComboBox x:Name="RegionBox" SelectedIndex="0" Height="36"><ComboBoxItem Content="Europe"/><ComboBoxItem Content="North America"/><ComboBoxItem Content="South America"/><ComboBoxItem Content="Asia-Pacific"/><ComboBoxItem Content="Middle East &amp; Africa"/></ComboBox>
-<TextBlock Text="Airly ID" Margin="0,18,0,6" Foreground="#486581"/><TextBox x:Name="AirlyIdBox" Height="36" Padding="8"/>
-<TextBlock Text="Username" Margin="0,18,0,6" Foreground="#486581"/><TextBox x:Name="UsernameBox" Height="36" Padding="8" IsEnabled="False"/>
-<TextBlock x:Name="StatusText" Text="Enter the Airly ID from your acceptance email." Foreground="#627D98" Margin="0,18,0,0" TextWrapping="Wrap"/></StackPanel></Border>
-<Button Grid.Row="2" x:Name="ActionButton" Content="Validate ID" Width="170" Height="42" HorizontalAlignment="Right" Click="ActionButton_Click"/></Grid></Window>
+<Window x:Class="AirlyClient.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Airly Client" Width="1100" Height="720"
+        MinWidth="980" MinHeight="620" WindowStartupLocation="CenterScreen"
+        Background="#F2F4F7">
+    <Grid>
+        <Grid.ColumnDefinitions><ColumnDefinition Width="220"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+
+        <Border Background="#102A43">
+            <DockPanel Margin="18">
+                <StackPanel DockPanel.Dock="Top">
+                    <TextBlock Text="AIRLY" Foreground="White" FontSize="16" FontWeight="Bold"/>
+                    <TextBlock Text="Network Client" Foreground="#BCCCDC" FontSize="12" Margin="0,3,0,28"/>
+                    <Button Content="Dashboard" Tag="Dashboard" Click="Nav_Click" Style="{StaticResource NavButton}"/>
+                    <Button Content="Connect" Tag="Connect" Click="Nav_Click" Style="{StaticResource NavButton}"/>
+                    <Button Content="Traffic" Tag="Traffic" Click="Nav_Click" Style="{StaticResource NavButton}"/>
+                    <Button Content="ATC Frequencies" Tag="Frequencies" Click="Nav_Click" Style="{StaticResource NavButton}"/>
+                    <Button Content="Weather / METAR" Tag="Weather" Click="Nav_Click" Style="{StaticResource NavButton}"/>
+                    <Button Content="Charts" Tag="Charts" Click="Nav_Click" Style="{StaticResource NavButton}"/>
+                    <Button Content="Flight Plan" Tag="FlightPlan" Click="Nav_Click" Style="{StaticResource NavButton}"/>
+                    <Button Content="Model Matching" Tag="Models" Click="Nav_Click" Style="{StaticResource NavButton}"/>
+                    <Button Content="Settings" Tag="Settings" Click="Nav_Click" Style="{StaticResource NavButton}"/>
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Bottom">
+                    <TextBlock x:Name="ConnectionLabel" Text="DISCONNECTED" Foreground="#F8D7DA" FontWeight="Bold"/>
+                    <TextBlock x:Name="VersionLabel" Text="Airly Client 0.1" Foreground="#829AB1" FontSize="11" Margin="0,4,0,0"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <Grid Grid.Column="1" Margin="30">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+            <DockPanel>
+                <StackPanel>
+                    <TextBlock x:Name="PageTitle" Text="Dashboard" FontSize="28" FontWeight="SemiBold" Foreground="#102A43"/>
+                    <TextBlock x:Name="PageSubtitle" Text="Airly network overview" Foreground="#627D98" Margin="0,4,0,0"/>
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <TextBlock x:Name="LatencyText" Text="— ms" VerticalAlignment="Center" Foreground="#627D98" Margin="0,0,15,0"/>
+                    <Button x:Name="ConnectButton" Content="Connect" Width="110" Height="38" Click="Connect_Click"/>
+                </StackPanel>
+            </DockPanel>
+
+            <Grid Grid.Row="1" Margin="0,25,0,0">
+                <Grid x:Name="DashboardView">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
+                        <UniformGrid Columns="4">
+                            <Border Style="{StaticResource Card}"><StackPanel><TextBlock Text="Network" Style="{StaticResource CardTitle}"/><TextBlock x:Name="NetworkStatus" Text="Offline" Style="{StaticResource Metric}"/></StackPanel></Border>
+                            <Border Style="{StaticResource Card}"><StackPanel><TextBlock Text="Airly traffic" Style="{StaticResource CardTitle}"/><TextBlock x:Name="TrafficCount" Text="0" Style="{StaticResource Metric}"/></StackPanel></Border>
+                            <Border Style="{StaticResource Card}"><StackPanel><TextBlock Text="ATC positions" Style="{StaticResource CardTitle}"/><TextBlock x:Name="ControllerCount" Text="0" Style="{StaticResource Metric}"/></StackPanel></Border>
+                            <Border Style="{StaticResource Card}"><StackPanel><TextBlock Text="Your aircraft" Style="{StaticResource CardTitle}"/><TextBlock x:Name="OwnAircraft" Text="Offline" Style="{StaticResource Metric}"/></StackPanel></Border>
+                        </UniformGrid>
+                        <Border Style="{StaticResource Card}" Margin="0,18,0,0"><StackPanel>
+                            <TextBlock Text="Network activity" Style="{StaticResource SectionTitle}"/>
+                            <TextBlock x:Name="ActivityText" Text="Connect to Airly to receive live traffic, ATC and network data." Foreground="#627D98" Margin="0,10,0,0"/>
+                        </StackPanel></Border>
+                    </StackPanel></ScrollViewer>
+                </Grid>
+
+                <Grid x:Name="ConnectView" Visibility="Collapsed"><Border Style="{StaticResource Card}"><StackPanel>
+                    <TextBlock Text="Connect to Airly" Style="{StaticResource SectionTitle}"/>
+                    <TextBlock Text="Select your simulator and network region. Airly validates your membership server-side before creating a network session." Foreground="#627D98" TextWrapping="Wrap" Margin="0,8,0,20"/>
+                    <TextBlock Text="Simulator" Style="{StaticResource FieldLabel}"/><ComboBox x:Name="SimulatorBox" Height="36" SelectedIndex="0"><ComboBoxItem Content="Microsoft Flight Simulator 2024"/><ComboBoxItem Content="Microsoft Flight Simulator 2020"/><ComboBoxItem Content="X-Plane 12"/><ComboBoxItem Content="X-Plane 11"/></ComboBox>
+                    <TextBlock Text="Region" Style="{StaticResource FieldLabel}"/><ComboBox x:Name="RegionBox" Height="36" SelectedIndex="0"><ComboBoxItem Content="Europe"/><ComboBoxItem Content="North America"/><ComboBoxItem Content="South America"/><ComboBoxItem Content="Asia-Pacific"/><ComboBoxItem Content="Middle East &amp; Africa"/></ComboBox>
+                    <TextBlock Text="Airly ID" Style="{StaticResource FieldLabel}"/><TextBox x:Name="AirlyIdBox" Height="36"/>
+                    <TextBlock Text="Username" Style="{StaticResource FieldLabel}"/><TextBox x:Name="UsernameBox" Height="36"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,20,0,0"><Button Content="Validate &amp; Connect" Width="160" Height="40" Click="Connect_Click"/><Button Content="Disconnect" Width="120" Height="40" Margin="10,0,0,0" Click="Disconnect_Click"/></StackPanel>
+                    <TextBlock x:Name="ConnectStatus" Foreground="#627D98" Margin="0,15,0,0" TextWrapping="Wrap"/>
+                </StackPanel></Border></Grid>
+
+                <Grid x:Name="TrafficView" Visibility="Collapsed"><Border Style="{StaticResource Card}"><StackPanel>
+                    <TextBlock Text="Live traffic" Style="{StaticResource SectionTitle}"/>
+                    <DataGrid x:Name="TrafficGrid" Margin="0,15,0,0" AutoGenerateColumns="False" IsReadOnly="True" Height="500">
+                        <DataGrid.Columns><DataGridTextColumn Header="Callsign" Binding="{Binding Callsign}"/><DataGridTextColumn Header="Aircraft" Binding="{Binding ModelCode}"/><DataGridTextColumn Header="Altitude" Binding="{Binding AltitudeFeet}"/><DataGridTextColumn Header="Speed" Binding="{Binding GroundSpeedKnots}"/><DataGridTextColumn Header="Heading" Binding="{Binding HeadingDegrees}"/><DataGridTextColumn Header="Frequency" Binding="{Binding Frequency}"/></DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel></Border></Grid>
+
+                <Grid x:Name="FrequenciesView" Visibility="Collapsed"><Border Style="{StaticResource Card}"><StackPanel>
+                    <TextBlock Text="ATC frequencies" Style="{StaticResource SectionTitle}"/>
+                    <TextBlock Text="Tune a frequency to hear other Airly pilots and controllers on that frequency. Voice access is authenticated by the network." Foreground="#627D98" Margin="0,8,0,15"/>
+                    <DataGrid x:Name="FrequencyGrid" AutoGenerateColumns="False" IsReadOnly="True" Height="470"><DataGrid.Columns><DataGridTextColumn Header="Airport" Binding="{Binding Airport}"/><DataGridTextColumn Header="Position" Binding="{Binding Position}"/><DataGridTextColumn Header="Frequency" Binding="{Binding Frequency}"/><DataGridTextColumn Header="Controller" Binding="{Binding Controller}"/></DataGrid.Columns></DataGrid>
+                </StackPanel></Border></Grid>
+
+                <Grid x:Name="WeatherView" Visibility="Collapsed"><Border Style="{StaticResource Card}"><StackPanel>
+                    <TextBlock Text="Airport weather / METAR" Style="{StaticResource SectionTitle}"/>
+                    <StackPanel Orientation="Horizontal" Margin="0,15,0,15"><TextBox x:Name="AirportSearchBox" Width="180" Height="36" Text="EGLL"/><Button Content="Get METAR" Width="120" Height="36" Margin="8,0,0,0" Click="Weather_Click"/></StackPanel>
+                    <TextBlock x:Name="MetarText" Text="Enter an ICAO code." FontFamily="Consolas" FontSize="15" Foreground="#243B53" TextWrapping="Wrap"/>
+                    <TextBlock x:Name="WeatherDetails" Foreground="#627D98" Margin="0,15,0,0" TextWrapping="Wrap"/>
+                </StackPanel></Border></Grid>
+
+                <Grid x:Name="ChartsView" Visibility="Collapsed"><Border Style="{StaticResource Card}"><StackPanel>
+                    <TextBlock Text="Charts" Style="{StaticResource SectionTitle}"/>
+                    <TextBlock Text="Airport charts will be loaded from Airly's chart service according to airport and procedure." Foreground="#627D98" Margin="0,8,0,15"/>
+                    <TextBox x:Name="ChartAirportBox" Width="180" Height="36" Text="EGLL"/>
+                    <ListBox x:Name="ChartList" Height="390" Margin="0,15,0,0"/>
+                </StackPanel></Border></Grid>
+
+                <Grid x:Name="FlightPlanView" Visibility="Collapsed"><Border Style="{StaticResource Card}"><StackPanel>
+                    <TextBlock Text="Flight plan" Style="{StaticResource SectionTitle}"/>
+                    <TextBlock Text="File, validate and send an Airly flight plan before connecting." Foreground="#627D98" Margin="0,8,0,20"/>
+                    <UniformGrid Columns="2"><StackPanel Margin="0,0,15,0"><TextBlock Text="Callsign" Style="{StaticResource FieldLabel}"/><TextBox Height="36" Text="AFL001"/><TextBlock Text="Aircraft type" Style="{StaticResource FieldLabel}"/><TextBox Height="36" Text="A320"/></StackPanel><StackPanel Margin="15,0,0,0"><TextBlock Text="Departure" Style="{StaticResource FieldLabel}"/><TextBox Height="36" Text="EIDW"/><TextBlock Text="Destination" Style="{StaticResource FieldLabel}"/><TextBox Height="36" Text="EGLL"/></StackPanel></UniformGrid>
+                    <TextBlock Text="Route" Style="{StaticResource FieldLabel}"/><TextBox Height="36" Text="DCT"/>
+                    <Button Content="Validate flight plan" Width="160" Height="40" HorizontalAlignment="Left" Margin="0,20,0,0"/>
+                </StackPanel></Border></Grid>
+
+                <Grid x:Name="ModelsView" Visibility="Collapsed"><Border Style="{StaticResource Card}"><StackPanel>
+                    <TextBlock Text="Model matching" Style="{StaticResource SectionTitle}"/>
+                    <TextBlock Text="Airly receives a versioned aircraft model catalog and automatically maps network aircraft to your simulator packages. Missing packages use an approved fallback." Foreground="#627D98" TextWrapping="Wrap" Margin="0,8,0,20"/>
+                    <TextBlock Text="Catalog status" Style="{StaticResource FieldLabel}"/><TextBlock x:Name="ModelStatus" Text="Not downloaded" Foreground="#243B53"/>
+                    <TextBlock Text="Supported simulators" Style="{StaticResource FieldLabel}"/><TextBlock Text="MSFS 2024 • MSFS 2020 • X-Plane 12 • X-Plane 11" Foreground="#243B53"/>
+                </StackPanel></Border></Grid>
+
+                <Grid x:Name="SettingsView" Visibility="Collapsed"><Border Style="{StaticResource Card}"><StackPanel>
+                    <TextBlock Text="Settings" Style="{StaticResource SectionTitle}"/>
+                    <CheckBox Content="Start Airly Client with Windows" Margin="0,18,0,0"/>
+                    <CheckBox Content="Automatically connect to Airly" Margin="0,12,0,0"/>
+                    <CheckBox Content="Enable ATC audio" IsChecked="True" Margin="0,12,0,0"/>
+                    <CheckBox Content="Enable multiplayer traffic" IsChecked="True" Margin="0,12,0,0"/>
+                    <CheckBox Content="Use automatic model matching" IsChecked="True" Margin="0,12,0,0"/>
+                </StackPanel></Border></Grid>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

@@ -6,22 +6,30 @@ on:
     branches: [main]
     paths:
       - "client/AirlyClient/**"
+      - "installer/**"
       - ".github/workflows/build-airly-client.yml"
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup .NET 8
-        uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
-      - name: Publish Windows EXE
+      - name: Publish EXE
         run: dotnet publish client/AirlyClient/AirlyClient.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o publish
-      - name: Upload Airly Client
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+      - name: Build installer
+        run: iscc installer/AirlyClient.iss
+      - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
           name: Airly-Client-win-x64
           path: publish/AirlyClient.exe
+      - name: Upload Installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Airly-Client-Installer-win-x64
+          path: installer-output/Airly-Client-Setup.exe
