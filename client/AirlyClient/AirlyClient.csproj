@@ -11,6 +11,6 @@
     <ApplicationIcon>Assets\Airly.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
-    <Content Include="Assets\Airly.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Resource Include="Assets\Airly.ico" />
   </ItemGroup>
 </Project>
