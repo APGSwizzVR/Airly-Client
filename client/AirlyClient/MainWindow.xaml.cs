@@ -12,6 +12,7 @@ namespace AirlyClient;
 public partial class MainWindow : Window
 {
     private readonly HttpClient _http = new();
+    private readonly AirportDataService _airportData;
     private readonly ObservableCollection<AircraftState> _traffic = new();
     private readonly ObservableCollection<TrackedFlight> _trackedFlights = new();
     private readonly AppSettings _settings;
@@ -23,6 +24,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _settings = AppSettings.Load();
+        _airportData = new AirportDataService(_http);
         TrafficGrid.ItemsSource = _traffic;
         TrackingGrid.ItemsSource = _trackedFlights;
         LoadSettingsIntoUi();
@@ -47,12 +49,42 @@ public partial class MainWindow : Window
 
     private void LoadDemoUiState()
     {
-        FrequencyGrid.ItemsSource = new[]
+        FrequencyGrid.ItemsSource = Array.Empty<object>();
+        ChartList.ItemsSource = Array.Empty<object>();
+    }
+
+    private async void LoadFrequencies_Click(object sender, RoutedEventArgs e)
+    {
+        var icao = FrequencyAirportBox.Text.Trim().ToUpperInvariant();
+        if (icao.Length != 4) { FrequencyStatus.Text = "Enter a four-letter ICAO code."; return; }
+        FrequencyStatus.Text = "Loading worldwide airport frequency data...";
+        try
         {
-            new { Airport="EGLL", Position="London Ground", Frequency="121.700", Controller="—" },
-            new { Airport="EIDW", Position="Dublin Tower", Frequency="118.600", Controller="—" }
-        };
-        ChartList.ItemsSource = new[] { "Airport diagram", "SID", "STAR", "Approach", "Ground / taxi", "Other procedures" };
+            var frequencies = await _airportData.GetFrequenciesAsync(icao);
+            FrequencyGrid.ItemsSource = frequencies.Select(f => new
+            {
+                Airport = icao,
+                Position = f.Type ?? "Other",
+                Frequency = f.FrequencyMHz.ToString("0.000"),
+                Controller = f.Description ?? "—"
+            }).ToList();
+            FrequencyStatus.Text = frequencies.Count == 0 ? "No source frequencies are available for this airport." : $"{frequencies.Count} source frequencies loaded.";
+        }
+        catch (Exception ex) { FrequencyStatus.Text = $"Frequency service unavailable: {ex.Message}"; }
+    }
+
+    private async void LoadCharts_Click(object sender, RoutedEventArgs e)
+    {
+        var icao = ChartAirportBox.Text.Trim().ToUpperInvariant();
+        if (icao.Length != 4) { ChartStatus.Text = "Enter a four-letter ICAO code."; return; }
+        ChartStatus.Text = "Loading verified chart sources...";
+        try
+        {
+            var result = await _airportData.GetChartsAsync(icao);
+            ChartList.ItemsSource = result?.Charts?.Select(c => $"{c.Provider} — {c.Coverage} — {c.Url}").ToList() ?? new List<string>();
+            ChartStatus.Text = result?.Note ?? "No verified chart source returned.";
+        }
+        catch (Exception ex) { ChartStatus.Text = $"Chart service unavailable: {ex.Message}"; }
     }
 
     private void Nav_Click(object sender, RoutedEventArgs e)
@@ -301,7 +333,7 @@ public partial class MainWindow : Window
             var response = await _http.GetAsync($"{ClientConfig.ApiBaseUrl}api/weather/metar?icao={Uri.EscapeDataString(icao)}");
             if (!response.IsSuccessStatusCode) { MetarText.Text = "METAR service is not connected yet."; return; }
             MetarText.Text = await response.Content.ReadAsStringAsync();
-            WeatherDetails.Text = "Airly uses a server-side weather provider so provider credentials are never shipped inside the client.";
+            WeatherDetails.Text = "METAR is served by Airly from AviationWeather.gov. Provider credentials remain server-side.";
         }
         catch { MetarText.Text = "Unable to reach the Airly weather service."; }
     }
