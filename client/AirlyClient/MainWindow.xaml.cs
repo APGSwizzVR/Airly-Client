@@ -1,1 +1,772 @@
-{"data":{"stdout":"using System.IO;\nusing System.Collections.ObjectModel;\nusing System.Diagnostics;\nusing System.Net.Http;\nusing System.Net.Http.Json;\nusing System.Text;\nusing System.Text.RegularExpressions;\nusing Microsoft.Win32;\nusing System.Text.Json;\nusing System.Windows;\nusing System.Windows.Controls;\nusing System.Windows.Media;\nusing System.Windows.Media.Animation;\nusing System.Windows.Media.Imaging;\nusing System.Windows.Threading;\nusing AirlyClient.Network;\n\nnamespace AirlyClient;\n\npublic partial class MainWindow : Window\n{\n    private readonly HttpClient _http = new();\n    private readonly AirportDataService _airportData;\n    private readonly ObservableCollection<AircraftState> _traffic = new();\n    private readonly ObservableCollection<TrackedFlight> _trackedFlights = new();\n    private readonly AppSettings _settings;\n    private bool _connected;\n    private TrackedFlight? _selectedFlight;\n    private SimBriefFlightPlan? _flightPlan;\n    private readonly DispatcherTimer _metricsTimer = new() { Interval = TimeSpan.FromSeconds(2) };\n    private readonly ModelMatchingInstaller _modelInstaller;\n    private string? _communityFolder;\n    private bool _metricsRequestRunning;\n    private int _renderFrames;\n    private long _lastFpsTick;\n\n    public MainWindow()\n    {\n        InitializeComponent();\n        _settings = AppSettings.Load();\n        _airportData = new AirportDataService(_http);\n        _modelInstaller = new ModelMatchingInstaller(_http);\n        TrafficGrid.ItemsSource = _traffic;\n        TrackingGrid.ItemsSource = _trackedFlights;\n        LoadSettingsIntoUi();\n        InitializeTheme();\n        LoadDemoUiState();\n        InitializeClientMetrics();\n        InitializeModelMatching();\n        TryLoadApplicationIcon();\n        RefreshTracking();\n        Closed += (_, _) => _settings.Save();\n        Closed += (_, _) => CompositionTarget.Rendering -= CompositionTarget_Rendering;\n        AddAiMessage(\"Airly AI\", \"Ask me about flight planning, ATC, aircraft systems, meteorology, navigation, procedures or aviation calculations. If it is unrelated to aviation, I’ll keep us on topic.\");\n    }\n\n    private void AddAiMessage(string sender, string message)\n    {\n        var border = new Border { Background = sender == \"You\" ? System.Windows.Media.Brushes.Transparent : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(16,27,45)), BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(38,55,80)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(7), Padding = new Thickness(12), Margin = new Thickness(0,0,0,8) };\n        var stack = new StackPanel();\n        stack.Children.Add(new TextBlock { Text = sender.ToUpperInvariant(), FontSize = 9, FontWeight = FontWeights.Bold, Foreground = sender == \"You\" ? System.Windows.Media.Brushes.LightSkyBlue : System.Windows.Media.Brushes.LightGray });\n        stack.Children.Add(new TextBlock { Text = message, FontSize = 12, Foreground = System.Windows.Media.Brushes.White, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0,5,0,0) });\n        border.Child = stack;\n        AiMessages.Children.Add(border);\n        AiScroll.ScrollToEnd();\n    }\n\n    private async void AiAsk_Click(object sender, RoutedEventArgs e)\n    {\n        var question = AiInput.Text.Trim();\n        if (string.IsNullOrWhiteSpace(question)) return;\n        AddAiMessage(\"You\", question);\n        AiInput.Clear();\n        AiStatusText.Text = \"Thinking…\";\n        try\n        {\n            var payload = new { message = question, power = _aiPower, attachments = string.IsNullOrWhiteSpace(AiAttachment.Text) || AiAttachment.Text == \"No attachment\" ? Array.Empty<object>() : new[] { new { name = AiAttachment.Text, content = \"Attachment selected in Airly Client\" } } };\n            using var response = await _http.PostAsJsonAsync($\"{ClientConfig.ApiBaseUrl}api/ai/helper\", payload);\n            var result = await response.Content.ReadFromJsonAsync<AiHelperResponse>();\n            AddAiMessage(\"Airly Helper\", result?.reply ?? \"The aviation helper service did not return a response.\");\n            AiStatusText.Text = response.IsSuccessStatusCode ? \"Ready\" : \"Service unavailable\";\n        }\n        catch (Exception ex) { AddAiMessage(\"Airly Helper\", $\"I could not reach the helper service: {ex.Message}\"); AiStatusText.Text = \"Offline\"; }\n    }\n\n    private void AiEmoji_Click(object sender, RoutedEventArgs e)\n    {\n        if ((sender as Button)?.Tag is string emoji) { AiInput.SelectedText = emoji; AiInput.CaretIndex += emoji.Length; AiInput.Focus(); }\n    }\n\n    private void AiFile_Click(object sender, RoutedEventArgs e)\n    {\n        var dialog = new OpenFileDialog { Multiselect = false, Filter = \"Aviation data|*.txt;*.csv;*.json;*.xml;*.log|All files|*.*\" };\n        if (dialog.ShowDialog() == true) { AiAttachment.Text = System.IO.Path.GetFileName(dialog.FileName); }\n    }\n\n    private string _aiPower = \"Medium\";\n\n    private void AiPower_Click(object sender, RoutedEventArgs e)\n    {\n        AiPowerBox.Focus();\n        AiPowerBox.IsDropDownOpen = true;\n    }\n\n    private void AiPower_SelectionChanged(object sender, SelectionChangedEventArgs e)\n    {\n        if (!IsInitialized || AiPowerBox.SelectedItem is not ComboBoxItem item) return;\n        var value = item.Content?.ToString() ?? \"Medium Power\";\n        _aiPower = value.StartsWith(\"Minimal\", StringComparison.OrdinalIgnoreCase) ? \"Minimal\" : value.StartsWith(\"Extra\", StringComparison.OrdinalIgnoreCase) ? \"Extra\" : \"Medium\";\n    }\n\n    private void AiInput_KeyDown(object sender, KeyEventArgs e)\n    {\n        if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None)\n        {\n            e.Handled = true;\n            AiAsk_Click(sender, new RoutedEventArgs());\n        }\n    }\n\n    private void LoadSettingsIntoUi()\n    {\n        SimBriefPilotIdBox.Text = _settings.SimBriefPilotId;\n        AirlyIdBox.Text = _settings.AirlyId;\n        UsernameBox.Text = _settings.Username;\n        SettingsAirlyIdBox.Text = _settings.AirlyId;\n        SettingsUsernameBox.Text = _settings.Username;\n        StartWithWindowsBox.IsChecked = _settings.StartWithWindows;\n        AutoConnectBox.IsChecked = _settings.AutoConnect;\n        EnableAtcAudioBox.IsChecked = _settings.EnableAtcAudio;\n        EnableMultiplayerBox.IsChecked = _settings.EnableMultiplayer;\n        AutomaticModelMatchingBox.IsChecked = _settings.AutomaticModelMatching;\n        _settings.ThemeMode = string.Equals(_settings.ThemeMode, \"Bright\", StringComparison.OrdinalIgnoreCase) ? \"Bright\" : \"Dark\";\n    }\n\n    private static readonly (string Name, string Hex)[] DarkPalette =\n    {\n        (\"Default\", \"#80858B\"), (\"Ocean\", \"#1689B8\"), (\"Aurora\", \"#27B8A4\"), (\"Violet\", \"#8B5CF6\"),\n        (\"Rose\", \"#E05272\"), (\"Amber\", \"#D99119\"), (\"Emerald\", \"#22A06B\"), (\"Glacier\", \"#53B6D6\"),\n        (\"Coral\", \"#E56A4A\"), (\"Silver\", \"#AEB7C2\")\n    };\n\n    private static readonly (string Name, string Hex)[] BrightPalette =\n    {\n        (\"Default\", \"#7A7F84\"), (\"Ocean\", \"#087EA4\"), (\"Teal\", \"#087F8C\"), (\"Violet\", \"#7044C8\"),\n        (\"Rose\", \"#C83F75\"), (\"Amber\", \"#A96800\"), (\"Emerald\", \"#168653\"), (\"Sky\", \"#176D9C\"),\n        (\"Coral\", \"#B84427\"), (\"Slate\", \"#4B5563\")\n    };\n\n    private void InitializeTheme()\n    {\n        ThemeModeBox.SelectedItem = ThemeModeBox.Items\n            .OfType<ComboBoxItem>()\n            .FirstOrDefault(item => string.Equals(item.Content?.ToString(), _settings.ThemeMode, StringComparison.OrdinalIgnoreCase))\n            ?? ThemeModeBox.Items[0];\n\n        PopulateAccentPalette(_settings.ThemeMode, _settings.AccentColor);\n        ApplyTheme();\n    }\n\n    private void ThemeModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)\n    {\n        if (!IsInitialized || ThemeModeBox.SelectedItem is not ComboBoxItem item) return;\n        var mode = item.Content?.ToString() == \"Bright\" ? \"Bright\" : \"Dark\";\n        _settings.ThemeMode = mode;\n        PopulateAccentPalette(mode, null);\n        ApplyTheme();\n    }\n\n    private void AccentColorBox_SelectionChanged(object sender, SelectionChangedEventArgs e)\n    {\n        if (!IsInitialized || AccentColorBox.SelectedItem is null) return;\n        var hex = ExtractPaletteHex(AccentColorBox.SelectedItem.ToString());\n        if (hex is null) return;\n        _settings.AccentColor = hex;\n        ApplyTheme();\n    }\n\n    private void PopulateAccentPalette(string mode, string? preferredHex)\n    {\n        var palette = string.Equals(mode, \"Bright\", StringComparison.OrdinalIgnoreCase) ? BrightPalette : DarkPalette;\n        var target = preferredHex;\n        AccentColorBox.Items.Clear();\n\n        foreach (var entry in palette)\n            AccentColorBox.Items.Add($\"{entry.Name} — {entry.Hex}\");\n\n        var selected = palette.FirstOrDefault(entry =>\n            string.Equals(entry.Hex, target, StringComparison.OrdinalIgnoreCase));\n\n        if (string.IsNullOrWhiteSpace(selected.Hex))\n            selected = palette[0];\n\n        AccentColorBox.SelectedItem = $\"{selected.Name} — {selected.Hex}\";\n        _settings.AccentColor = selected.Hex;\n    }\n\n    private static string? ExtractPaletteHex(string? value)\n    {\n        if (string.IsNullOrWhiteSpace(value)) return null;\n        var marker = value.LastIndexOf('—');\n        if (marker < 0) return null;\n        var hex = value[(marker + 1)..].Trim();\n        return Regex.IsMatch(hex, \"^#[0-9A-Fa-f]{6}$\") ? hex : null;\n    }\n\n    private static string GetDefaultAccent(string mode) =>\n        string.Equals(mode, \"Bright\", StringComparison.OrdinalIgnoreCase) ? BrightPalette[0].Hex : DarkPalette[0].Hex;\n\n    private void ApplyTheme()\n    {\n        var bright = string.Equals(_settings.ThemeMode, \"Bright\", StringComparison.OrdinalIgnoreCase);\n        var accent = ParseColor(_settings.AccentColor, ParseColor(GetDefaultAccent(_settings.ThemeMode), Colors.Gray));\n\n        var window = bright ? \"#F3F5F6\" : \"#0A0D11\";\n        var sidebar = bright ? \"#FFFFFF\" : \"#080B0F\";\n        var glass = bright ? \"#FFFFFF\" : \"#12171D\";\n        var panel = bright ? \"#FAFBFC\" : \"#151B22\";\n        var input = bright ? \"#F6F8F9\" : \"#0E1318\";\n        var line = bright ? \"#D8E0E4\" : \"#27303A\";\n        var text = bright ? \"#17232C\" : \"#F2F5F7\";\n        var muted = bright ? \"#62717B\" : \"#9BA7B1\";\n        var accentSoft = Color.FromArgb(bright ? (byte)28 : (byte)48, accent.R, accent.G, accent.B);\n\n        SetBrush(\"WindowBrush\", window);\n        SetBrush(\"SidebarBrush\", sidebar);\n        SetBrush(\"GlassBrush\", glass);\n        SetBrush(\"PanelBrush\", panel);\n        SetBrush(\"InputBrush\", input);\n        SetBrush(\"LineBrush\", line);\n        SetBrush(\"TextBrush\", text);\n        SetBrush(\"MutedBrush\", muted);\n        SetBrush(\"AccentBrush\", accent);\n        SetBrush(\"AccentSoftBrush\", accentSoft);\n        SetBrush(\"SuccessBrush\", bright ? \"#167447\" : \"#62C995\");\n        SetBrush(\"DangerBrush\", bright ? \"#B42318\" : \"#E68181\");\n\n        Background = (Brush)Resources[\"WindowBrush\"];\n        Foreground = (Brush)Resources[\"TextBrush\"];\n    }\n\n    private void SetBrush(string key, string hex) =>\n        Resources[key] = new SolidColorBrush(ParseColor(hex, Colors.Transparent));\n\n    private void SetBrush(string key, Color color) =>\n        Resources[key] = new SolidColorBrush(color);\n\n    private static Color ParseColor(string hex, Color fallback) =>\n        ColorConverter.ConvertFromString(hex) is Color color ? color : fallback;\n\n    private void LoadDemoUiState()\n    {\n        FrequencyGrid.ItemsSource = Array.Empty<object>();\n        ChartList.ItemsSource = Array.Empty<object>();\n    }\n\n    private async void LoadFrequencies_Click(object sender, RoutedEventArgs e)\n    {\n        var icao = FrequencyAirportBox.Text.Trim().ToUpperInvariant();\n        if (icao.Length != 4) { FrequencyStatus.Text = \"Enter a four-letter ICAO code.\"; return; }\n        FrequencyStatus.Text = \"Loading worldwide airport frequency data...\";\n        try\n        {\n            var frequencies = await _airportData.GetFrequenciesAsync(icao);\n            FrequencyGrid.ItemsSource = frequencies.Select(f => new\n            {\n                Airport = icao,\n                Position = f.Type ?? \"Other\",\n                Frequency = f.FrequencyMHz.ToString(\"0.000\"),\n                Controller = f.Description ?? \"—\"\n            }).ToList();\n            FrequencyStatus.Text = frequencies.Count == 0 ? \"No source frequencies are available for this airport.\" : $\"{frequencies.Count} source frequencies loaded.\";\n        }\n        catch (Exception ex) { FrequencyStatus.Text = $\"Frequency service unavailable: {ex.Message}\"; }\n    }\n\n    private async void LoadCharts_Click(object sender, RoutedEventArgs e)\n    {\n        var icao = ChartAirportBox.Text.Trim().ToUpperInvariant();\n        if (icao.Length != 4) { ChartStatus.Text = \"Enter a four-letter ICAO code.\"; return; }\n        ChartStatus.Text = \"Loading verified chart sources...\";\n        try\n        {\n            var result = await _airportData.GetChartsAsync(icao);\n            ChartList.ItemsSource = result?.Charts ?? new List<AirportDataService.ChartSource>();\n            ChartStatus.Text = result?.Note ?? \"No verified chart source returned.\";\n            if (result?.Charts is { Count: > 0 })\n                ChartStatus.Text += $\"  {result.Charts.Count} provider source(s) available.\";\n        }\n        catch (Exception ex) { ChartStatus.Text = $\"Chart service unavailable: {ex.Message}\"; }\n    }\n\n    private void ChartOpen_Click(object sender, RoutedEventArgs e)\n    {\n        var url = (sender as Button)?.Tag?.ToString();\n        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))\n            Process.Start(new ProcessStartInfo(uri.ToString()) { UseShellExecute = true });\n    }\n\n    private void Nav_Click(object sender, RoutedEventArgs e)\n    {\n        var name = (sender as Button)?.Tag?.ToString() ?? \"Dashboard\";\n        var views = new Dictionary<string, UIElement>\n        {\n            [\"Dashboard\"] = DashboardView, [\"Connect\"] = ConnectView, [\"Traffic\"] = TrafficView, [\"AiHelper\"] = AiHelperView,\n            [\"Tracking\"] = TrackingView, [\"Frequencies\"] = FrequenciesView, [\"Weather\"] = WeatherView,\n            [\"Charts\"] = ChartsView, [\"FlightPlan\"] = FlightPlanView, [\"Models\"] = ModelsView, [\"Settings\"] = SettingsView\n        };\n\n        foreach (var view in views.Values)\n            view.Visibility = Visibility.Collapsed;\n\n        if (!views.TryGetValue(name, out var selected))\n            return;\n\n        selected.Visibility = Visibility.Visible;\n        selected.Opacity = 0;\n        selected.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180))\n        {\n            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }\n        });\n        PageTitle.Text = name switch\n        {\n            \"Dashboard\" => \"Overview\", \"Tracking\" => \"Track Flights\", \"FlightPlan\" => \"Flight Plan\",\n            \"Frequencies\" => \"ATC Frequencies\", \"Weather\" => \"Weather / METAR\", \"Charts\" => \"Charts\",\n            \"Models\" => \"Model Matching\", \"AiHelper\" => \"Airly AI\", _ => name\n        };\n        PageEyebrow.Text = name switch\n        {\n            \"Tracking\" => \"LIVE FLIGHT TRACKING\", \"FlightPlan\" => \"DISPATCH\", \"Frequencies\" => \"AIR TRAFFIC CONTROL\",\n            \"Weather\" => \"FLIGHT OPERATIONS\", \"Charts\" => \"NAVIGATION\", \"Settings\" => \"CLIENT CONFIGURATION\",\n            _ => \"AIRLY NETWORK\"\n        };\n        PageSubtitle.Text = name switch\n        {\n            \"Tracking\" => \"Search and inspect aircraft on the Airly network\",\n            \"FlightPlan\" => \"Import the latest operational flight plan from SimBrief\",\n            \"Frequencies\" => \"Controller positions and authenticated frequency audio\",\n            \"Weather\" => \"Airport weather and METAR information\",\n            \"Charts\" => \"Airport and instrument procedure charts\",\n            \"AiHelper\" => \"A focused assistant for aviation questions and calculations\",\n            _ => \"Flight simulation network operations\"\n        };\n    }\n\n    private async void Connect_Click(object sender, RoutedEventArgs e)\n    {\n        if (_connected) { Disconnect(); return; }\n        ConnectButton.IsEnabled = false;\n        ConnectStatus.Text = \"Validating Airly membership…\";\n\n        try\n        {\n            SaveSettingsFromUi();\n            var id = AirlyIdBox.Text.Trim();\n            var region = ((ComboBoxItem)RegionBox.SelectedItem)?.Content?.ToString() ?? \"Europe\";\n            if (string.IsNullOrWhiteSpace(id)) { ConnectStatus.Text = \"Enter your Airly ID.\"; return; }\n\n            var response = await _http.PostAsJsonAsync($\"{ClientConfig.ApiBaseUrl}api/client/activate\", new { region, airlyId=id });\n            var result = await response.Content.ReadFromJsonAsync<ActivationResponse>();\n\n            if (!response.IsSuccessStatusCode || result is null || !result.Valid)\n            {\n                ConnectStatus.Text = result?.Message ?? \"Activation service unavailable.\";\n                return;\n            }\n\n            _connected = true;\n            SetConnectionState(true);\n            ConnectStatus.Text = \"Authenticated. Realtime network session is ready.\";\n        }\n        catch (Exception ex) { ConnectStatus.Text = $\"Connection failed: {ex.Message}\"; }\n        finally { ConnectButton.IsEnabled = true; }\n    }\n\n    private void Disconnect_Click(object sender, RoutedEventArgs e) => Disconnect();\n\n    private void Disconnect()\n    {\n        _connected = false;\n        SetConnectionState(false);\n        ConnectStatus.Text = \"Disconnected from Airly.\";\n    }\n\n    private void SetConnectionState(bool connected)\n    {\n        ConnectionLabel.Text = connected ? \"CONNECTED\" : \"DISCONNECTED\";\n        ConnectionLabel.Foreground = connected ? System.Windows.Media.Brushes.LightGreen : System.Windows.Media.Brushes.LightPink;\n        TopStatusText.Text = connected ? \"ONLINE\" : \"OFFLINE\";\n        TopStatusText.Foreground = connected ? System.Windows.Media.Brushes.LightGreen : System.Windows.Media.Brushes.LightPink;\n        NetworkStatus.Text = connected ? \"Online\" : \"Offline\";\n        OwnAircraft.Text = connected ? \"Ready\" : \"Offline\";\n        ConnectButton.Content = connected ? \"Disconnect\" : \"Connect\";\n        TrafficCount.Text = _traffic.Count.ToString();\n        ActivityText.Text = connected\n            ? \"Connected. Traffic, ATC, voice and simulator state can synchronize through the Airly realtime service.\"\n            : \"Connect to Airly to receive live traffic, ATC and network data.\";\n    }\n\n    private async void ImportSimBrief_Click(object sender, RoutedEventArgs e)\n    {\n        SaveSettingsFromUi();\n        var pilotId = _settings.SimBriefPilotId.Trim();\n\n        if (string.IsNullOrWhiteSpace(pilotId))\n        {\n            FlightPlanStatus.Text = \"Add your SimBrief Pilot ID in Settings first.\";\n            Nav_Click(new Button { Tag = \"Settings\" }, new RoutedEventArgs());\n            return;\n        }\n\n        FlightPlanStatus.Text = \"Fetching your latest SimBrief OFP…\";\n\n        try\n        {\n            var url = $\"https://www.simbrief.com/api/xml.fetcher.php?userid={Uri.EscapeDataString(pilotId)}&json=v2\";\n            using var response = await _http.GetAsync(url);\n\n            if (!response.IsSuccessStatusCode)\n            {\n                FlightPlanStatus.Text = $\"SimBrief returned HTTP {(int)response.StatusCode}. Generate a flight plan in SimBrief and try again.\";\n                return;\n            }\n\n            var json = await response.Content.ReadAsStringAsync();\n            _flightPlan = SimBriefFlightPlan.FromJson(json, pilotId);\n            ApplyFlightPlan(_flightPlan);\n            FlightPlanStatus.Text = $\"Imported {_flightPlan.Callsign} from SimBrief. This import only occurs when you press the button.\";\n            RefreshTracking();\n        }\n        catch (JsonException)\n        {\n            FlightPlanStatus.Text = \"SimBrief returned data that Airly could not parse.\";\n        }\n        catch (Exception ex)\n        {\n            FlightPlanStatus.Text = $\"SimBrief import failed: {ex.Message}\";\n        }\n    }\n\n    private void ApplyFlightPlan(SimBriefFlightPlan plan)\n    {\n        PlanCallsign.Text = plan.Callsign;\n        PlanRoute.Text = $\"{plan.Origin} → {plan.Destination}\";\n        PlanCruise.Text = FormatAltitude(plan.CruiseAltitudeFeet);\n        PlanAirports.Text = $\"{plan.Origin} → {plan.Destination}\";\n        PlanAircraft.Text = string.IsNullOrWhiteSpace(plan.Aircraft) ? \"—\" : plan.Aircraft;\n        PlanRegistration.Text = string.IsNullOrWhiteSpace(plan.Registration) ? \"—\" : plan.Registration;\n        PlanAlternate.Text = string.IsNullOrWhiteSpace(plan.Alternate) ? \"—\" : plan.Alternate;\n        PlanTimes.Text = $\"{plan.DepartureTime} → {plan.ArrivalTime}\";\n        PlanAirac.Text = string.IsNullOrWhiteSpace(plan.Airac) ? \"—\" : plan.Airac;\n        PlanFullRoute.Text = plan.RouteSummary;\n        DashboardRoute.Text = $\"{plan.Origin} → {plan.Destination}\";\n        DashboardCruise.Text = FormatAltitude(plan.CruiseAltitudeFeet);\n        DashboardCallsign.Text = plan.Callsign;\n    }\n\n    private void RefreshTracking()\n    {\n        _trackedFlights.Clear();\n\n        foreach (var aircraft in _traffic)\n        {\n            var planMatches = _flightPlan is not null &&\n                              string.Equals(aircraft.Callsign, _flightPlan.Callsign, StringComparison.OrdinalIgnoreCase);\n\n            _trackedFlights.Add(new TrackedFlight(\n                aircraft.Callsign,\n                aircraft.ModelCode,\n                planMatches ? _flightPlan!.Registration : string.Empty,\n                planMatches ? _flightPlan!.Origin : \"—\",\n                planMatches ? _flightPlan!.Destination : \"—\",\n                planMatches ? _flightPlan!.RouteSummary : \"—\",\n                aircraft.Latitude,\n                aircraft.Longitude,\n                aircraft.AltitudeFeet,\n                aircraft.GroundSpeedKnots,\n                aircraft.HeadingDegrees,\n                aircraft.VerticalSpeedFeetPerMinute,\n                planMatches ? _flightPlan!.CruiseAltitudeFeet : 0,\n                aircraft.Frequency ?? \"—\",\n                aircraft.VerticalSpeedFeetPerMinute > 300 ? \"CLIMB\" : aircraft.VerticalSpeedFeetPerMinute < -300 ? \"DESCENT\" : \"CRUISE\",\n                string.Empty,\n                BuildJetPhotosSearchUrl(planMatches ? _flightPlan!.Registration : aircraft.Callsign)));\n        }\n    }\n\n    private void TrackingSearch_TextChanged(object sender, TextChangedEventArgs e)\n    {\n        var query = TrackingSearchBox.Text.Trim();\n        TrackingGrid.ItemsSource = string.IsNullOrWhiteSpace(query)\n            ? _trackedFlights\n            : _trackedFlights.Where(f =>\n                f.Callsign.Contains(query, StringComparison.OrdinalIgnoreCase) ||\n                f.Aircraft.Contains(query, StringComparison.OrdinalIgnoreCase) ||\n                f.Origin.Contains(query, StringComparison.OrdinalIgnoreCase) ||\n                f.Destination.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();\n    }\n\n    private void ClearTracking_Click(object sender, RoutedEventArgs e)\n    {\n        TrackingSearchBox.Clear();\n        TrackingGrid.ItemsSource = _trackedFlights;\n    }\n\n    private void TrackingGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)\n    {\n        _selectedFlight = TrackingGrid.SelectedItem as TrackedFlight;\n        if (_selectedFlight is null)\n        {\n            TrackCallsign.Text = \"Select a flight\";\n            TrackAircraft.Text = \"—\";\n            JetPhotosButton.Visibility = Visibility.Collapsed;\n            return;\n        }\n\n        TrackCallsign.Text = _selectedFlight.Callsign;\n        TrackAircraft.Text = string.IsNullOrWhiteSpace(_selectedFlight.Registration)\n            ? _selectedFlight.Aircraft\n            : $\"{_selectedFlight.Aircraft} • {_selectedFlight.Registration}\";\n        TrackRoute.Text = $\"{_selectedFlight.Origin} → {_selectedFlight.Destination}\";\n        TrackPosition.Text = $\"{_selectedFlight.Latitude:F4}, {_selectedFlight.Longitude:F4}\";\n        TrackHeading.Text = $\"{_selectedFlight.HeadingDegrees:000}°\";\n        TrackAltitude.Text = FormatAltitude(_selectedFlight.AltitudeFeet);\n        TrackCruise.Text = _selectedFlight.CruiseAltitudeFeet > 0 ? FormatAltitude(_selectedFlight.CruiseAltitudeFeet) : \"Not in plan\";\n        TrackSpeed.Text = $\"{_selectedFlight.GroundSpeedKnots:N0} kt\";\n        PhotoStatus.Text = string.IsNullOrWhiteSpace(_selectedFlight.PhotoUrl)\n            ? \"JetPhotos search is available for this aircraft.\"\n            : \"Photo source: JetPhotos\";\n        JetPhotosButton.Tag = _selectedFlight.PhotoSourceUrl;\n        JetPhotosButton.Visibility = Visibility.Visible;\n    }\n\n    private void JetPhotos_Click(object sender, RoutedEventArgs e)\n    {\n        var url = (sender as Button)?.Tag?.ToString();\n        if (!string.IsNullOrWhiteSpace(url))\n            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });\n    }\n\n    private async void Weather_Click(object sender, RoutedEventArgs e)\n    {\n        var icao = AirportSearchBox.Text.Trim().ToUpperInvariant();\n        if (icao.Length != 4) { MetarText.Text = \"Enter a four-letter ICAO airport code.\"; return; }\n        MetarText.Text = \"Loading METAR…\";\n        WeatherDetails.Text = \"\";\n        try\n        {\n            using var response = await _http.GetAsync($\"{ClientConfig.ApiBaseUrl}api/weather/metar?icao={Uri.EscapeDataString(icao)}\", HttpCompletionOption.ResponseHeadersRead);\n            if (!response.IsSuccessStatusCode) { MetarText.Text = $\"METAR unavailable (HTTP {(int)response.StatusCode}).\"; return; }\n            var payload = await response.Content.ReadFromJsonAsync<MetarEnvelope>();\n            var observation = payload?.Metar?.FirstOrDefault();\n            if (observation is null) { MetarText.Text = $\"No current METAR is available for {icao}.\"; return; }\n\n            WeatherStation.Text = observation.IcaoId ?? icao;\n            WeatherName.Text = observation.Name ?? \"Airport weather station\";\n            WeatherCategory.Text = observation.FltCat ?? \"—\";\n            WeatherObserved.Text = FormatUtcObservation(observation.ReportTime, observation.ObsTime);\n            WeatherWind.Text = FormatWind(observation.Wdir, observation.Wspd, observation.Wgst);\n            WeatherVisibility.Text = string.IsNullOrWhiteSpace(observation.Visib) ? \"—\" : observation.Visib + \" SM\";\n            WeatherTemperature.Text = FormatCelsius(observation.Temp);\n            WeatherDewpoint.Text = FormatCelsius(observation.Dewp);\n            WeatherPressure.Text = observation.Altim is null ? \"—\" : $\"{observation.Altim:0.0} hPa\";\n            WeatherClouds.Text = FormatClouds(observation.Clouds);\n            WeatherPhenomena.Text = string.IsNullOrWhiteSpace(observation.WxString) ? \"No significant weather reported\" : observation.WxString;\n            MetarText.Text = observation.RawOb ?? \"Raw METAR unavailable\";\n            WeatherDetails.Text = $\"Observed {FormatUtcObservation(observation.ReportTime, observation.ObsTime)} • {observation.Name ?? icao} • Source: AviationWeather.gov\";\n        }\n        catch (Exception ex)\n        {\n            MetarText.Text = \"Unable to reach the Airly weather service.\";\n            WeatherDetails.Text = ex.Message;\n        }\n    }\n\n    private void InitializeModelMatching()\n    {\n        _communityFolder = ModelMatchingInstaller.FindCommunityFolders().FirstOrDefault();\n        ModelCommunityPath.Text = _communityFolder ?? \"No default Community folder found. Use Choose Community.\";\n        ModelInstallButton.IsEnabled = !string.IsNullOrWhiteSpace(_communityFolder);\n    }\n\n    private void ChooseCommunity_Click(object sender, RoutedEventArgs e)\n    {\n        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = \"Select your Microsoft Flight Simulator Community folder\", Multiselect = false };\n        if (dialog.ShowDialog(this) != true) return;\n        var selected = dialog.FolderName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);\n        if (!string.Equals(new DirectoryInfo(selected).Name, \"Community\", StringComparison.OrdinalIgnoreCase))\n        {\n            ModelStatus.Text = \"Select the Community folder itself.\";\n            return;\n        }\n        _communityFolder = selected;\n        ModelCommunityPath.Text = selected;\n        ModelInstallButton.IsEnabled = true;\n        ModelStatus.Text = \"Community folder selected.\";\n    }\n\n    private void OpenCommunity_Click(object sender, RoutedEventArgs e)\n    {\n        if (!string.IsNullOrWhiteSpace(_communityFolder) && Directory.Exists(_communityFolder))\n            Process.Start(new ProcessStartInfo(_communityFolder) { UseShellExecute = true });\n        else\n            ModelStatus.Text = \"Select a valid Community folder first.\";\n    }\n\n    private async void InstallModels_Click(object sender, RoutedEventArgs e)\n    {\n        if (string.IsNullOrWhiteSpace(_communityFolder))\n        {\n            ChooseCommunity_Click(sender, e);\n            if (string.IsNullOrWhiteSpace(_communityFolder)) return;\n        }\n\n        ModelInstallButton.IsEnabled = false;\n        ModelProgressBar.Visibility = Visibility.Visible;\n        ModelProgressBar.Value = 0;\n        ModelProgressText.Text = \"Preparing FSLTL download…\";\n        ModelStatus.Text = \"Downloading the latest FSLTL Traffic Base Models release.\";\n        try\n        {\n            var progress = new Progress<double>(value =>\n            {\n                ModelProgressBar.Value = value;\n                ModelProgressText.Text = value >= 99.9 ? \"Extracting and installing into Community…\" : $\"Downloading… {value:0}%\";\n            });\n            var installedPath = await _modelInstaller.InstallLatestFslTlAsync(_communityFolder!, progress);\n            ModelProgressText.Text = \"Installation complete.\";\n            ModelStatus.Text = $\"FSLTL model package installed: {installedPath}\";\n        }\n        catch (Exception ex)\n        {\n            ModelProgressText.Text = \"\";\n            ModelStatus.Text = $\"Model matching install failed: {ex.Message}\";\n        }\n        finally { ModelInstallButton.IsEnabled = true; }\n    }\n\n    private void SaveSettings_Click(object sender, RoutedEventArgs e)\n    {\n        SaveSettingsFromUi();\n        SettingsStatus.Text = \"Settings saved locally.\";\n    }\n\n    private void SaveSettingsFromUi()\n    {\n        _settings.SimBriefPilotId = SimBriefPilotIdBox.Text.Trim();\n        _settings.AirlyId = SettingsAirlyIdBox.Text.Trim();\n        _settings.Username = SettingsUsernameBox.Text.Trim();\n        _settings.StartWithWindows = StartWithWindowsBox.IsChecked == true;\n        _settings.AutoConnect = AutoConnectBox.IsChecked == true;\n        _settings.EnableAtcAudio = EnableAtcAudioBox.IsChecked == true;\n        _settings.EnableMultiplayer = EnableMultiplayerBox.IsChecked == true;\n        _settings.AutomaticModelMatching = AutomaticModelMatchingBox.IsChecked == true;\n        _settings.ThemeMode = ThemeModeBox.SelectedItem is ComboBoxItem themeItem ? themeItem.Content?.ToString() ?? \"Dark\" : \"Dark\";\n        _settings.AccentColor = ExtractPaletteHex(AccentColorBox.SelectedItem?.ToString()) ?? GetDefaultAccent(_settings.ThemeMode);\n        AirlyIdBox.Text = _settings.AirlyId;\n        UsernameBox.Text = _settings.Username;\n        _settings.Save();\n    }\n\n    private void InitializeClientMetrics()\n    {\n        _lastFpsTick = Stopwatch.GetTimestamp();\n        CompositionTarget.Rendering += CompositionTarget_Rendering;\n        _metricsTimer.Tick += async (_, _) => await UpdateLatencyAsync();\n        _metricsTimer.Start();\n        _ = UpdateLatencyAsync();\n    }\n\n    private void CompositionTarget_Rendering(object? sender, EventArgs e)\n    {\n        _renderFrames++;\n        var now = Stopwatch.GetTimestamp();\n        var elapsed = (now - _lastFpsTick) / (double)Stopwatch.Frequency;\n        if (elapsed >= 1)\n        {\n            var fps = _renderFrames / elapsed;\n            _renderFrames = 0;\n            _lastFpsTick = now;\n            FpsText.Text = $\"  •  FPS {fps:0}\";\n            HeaderFpsText.Text = $\"  •  FPS {fps:0}\";\n        }\n    }\n\n    private async Task UpdateLatencyAsync()\n    {\n        if (_metricsRequestRunning) return;\n        _metricsRequestRunning = true;\n        try\n        {\n            var stopwatch = Stopwatch.StartNew();\n            using var response = await _http.GetAsync($\"{ClientConfig.ApiBaseUrl}api/ping\", HttpCompletionOption.ResponseHeadersRead);\n            stopwatch.Stop();\n            if (response.IsSuccessStatusCode)\n            {\n                var value = $\"{stopwatch.Elapsed.TotalMilliseconds:0} ms\";\n                LatencyText.Text = $\"Latency {value}\";\n                HeaderLatencyText.Text = $\"LATENCY {value}\";\n            }\n            else\n            {\n                LatencyText.Text = \"Latency —\";\n                HeaderLatencyText.Text = \"LATENCY —\";\n            }\n        }\n        catch\n        {\n            LatencyText.Text = \"Latency —\";\n            HeaderLatencyText.Text = \"LATENCY —\";\n        }\n        finally { _metricsRequestRunning = false; }\n    }\n\n    private void TryLoadApplicationIcon()\n    {\n        try\n        {\n            var iconPath = Path.Combine(AppContext.BaseDirectory, \"Assets\", \"Airly.ico\");\n            if (File.Exists(iconPath))\n                Icon = new BitmapImage { UriSource = new Uri(iconPath, UriKind.Absolute), CacheOption = BitmapCacheOption.OnLoad };\n        }\n        catch { }\n    }\n\n    private static string FormatUtcObservation(string? reportTime, long? obsTime)\n    {\n        if (DateTimeOffset.TryParse(reportTime, out var parsed)) return parsed.UtcDateTime.ToString(\"dd MMM HH:mm'Z'\");\n        if (obsTime is long unix) return DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime.ToString(\"dd MMM HH:mm'Z'\");\n        return \"Observation time unavailable\";\n    }\n\n    private static string FormatWind(int? direction, double? speed, double? gust)\n    {\n        if (direction is null && speed is null) return \"—\";\n        var dir = direction is null ? \"VRB\" : direction.Value.ToString(\"000\") + \"°\";\n        var text = $\"{dir} {speed.GetValueOrDefault():0} kt\";\n        if (gust is > 0) text += $\" G{gust:0}\";\n        return text;\n    }\n\n    private static string FormatCelsius(double? value) => value is null ? \"—\" : $\"{value:0.0} °C\";\n\n    private static string FormatClouds(List<CloudLayer>? clouds)\n    {\n        if (clouds is null || clouds.Count == 0) return \"Clear / not reported\";\n        return string.Join(\"  •  \", clouds.Select(c => string.IsNullOrWhiteSpace(c.Cover) ? \"Cloud layer\" : $\"{c.Cover} {(c.Base is null ? \"\" : $\"{c.Base:N0} ft\")}\".Trim()));\n    }\n\n    private static string FormatAltitude(double feet)\n    {\n        if (feet <= 0) return \"—\";\n        return $\"{Math.Round(feet / 100.0) * 100:N0} ft\";\n    }\n\n    private static string BuildJetPhotosSearchUrl(string value)\n    {\n        if (string.IsNullOrWhiteSpace(value)) return \"https://www.jetphotos.com/\";\n        return $\"https://www.jetphotos.com/search?keywords={Uri.EscapeDataString(value)}\";\n    }\n\n    private sealed record MetarEnvelope(bool Ok, string? Source, string Icao, DateTimeOffset FetchedAt, List<MetarObservation>? Metar);\n    private sealed record MetarObservation(string? IcaoId, string? Name, string? ReportTime, long? ObsTime, double? Temp, double? Dewp, int? Wdir, double? Wspd, double? Wgst, string? Visib, double? Altim, string? WxString, string? FltCat, string? RawOb, List<CloudLayer>? Clouds);\n    private sealed record CloudLayer(string? Cover, double? Base);\n\n    private sealed record ActivationResponse(bool Valid, string Message);\n\n    private sealed class AiHelperResponse\n    {\n        public string? reply { get; set; }\n    }\n}\n","stdoutLines":772,"stderr":"","stderrLines":0,"sandbox_id_suffix":"d5k4","session":{"id":"nuts","instructions":"REQUIRED: Pass session_id \"nuts\" in ALL subsequent meta tool calls for this workflow."}},"error":null,"log_id":"log_HwRKEs4urzsw","successful":true}
+using System.IO;
+using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.Net.Http;
+using System.Net.Http.Json;
+using System.Text;
+using System.Text.RegularExpressions;
+using Microsoft.Win32;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+using AirlyClient.Network;
+
+namespace AirlyClient;
+
+public partial class MainWindow : Window
+{
+    private readonly HttpClient _http = new();
+    private readonly AirportDataService _airportData;
+    private readonly ObservableCollection<AircraftState> _traffic = new();
+    private readonly ObservableCollection<TrackedFlight> _trackedFlights = new();
+    private readonly AppSettings _settings;
+    private bool _connected;
+    private TrackedFlight? _selectedFlight;
+    private SimBriefFlightPlan? _flightPlan;
+    private readonly DispatcherTimer _metricsTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    private readonly ModelMatchingInstaller _modelInstaller;
+    private string? _communityFolder;
+    private bool _metricsRequestRunning;
+    private int _renderFrames;
+    private long _lastFpsTick;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        _settings = AppSettings.Load();
+        _airportData = new AirportDataService(_http);
+        _modelInstaller = new ModelMatchingInstaller(_http);
+        TrafficGrid.ItemsSource = _traffic;
+        TrackingGrid.ItemsSource = _trackedFlights;
+        LoadSettingsIntoUi();
+        InitializeTheme();
+        LoadDemoUiState();
+        InitializeClientMetrics();
+        InitializeModelMatching();
+        TryLoadApplicationIcon();
+        RefreshTracking();
+        Closed += (_, _) => _settings.Save();
+        Closed += (_, _) => CompositionTarget.Rendering -= CompositionTarget_Rendering;
+        AddAiMessage("Airly AI", "Ask me about flight planning, ATC, aircraft systems, meteorology, navigation, procedures or aviation calculations. If it is unrelated to aviation, I’ll keep us on topic.");
+    }
+
+    private void AddAiMessage(string sender, string message)
+    {
+        var border = new Border { Background = sender == "You" ? System.Windows.Media.Brushes.Transparent : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(16,27,45)), BorderBrush = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(38,55,80)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(7), Padding = new Thickness(12), Margin = new Thickness(0,0,0,8) };
+        var stack = new StackPanel();
+        stack.Children.Add(new TextBlock { Text = sender.ToUpperInvariant(), FontSize = 9, FontWeight = FontWeights.Bold, Foreground = sender == "You" ? System.Windows.Media.Brushes.LightSkyBlue : System.Windows.Media.Brushes.LightGray });
+        stack.Children.Add(new TextBlock { Text = message, FontSize = 12, Foreground = System.Windows.Media.Brushes.White, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0,5,0,0) });
+        border.Child = stack;
+        AiMessages.Children.Add(border);
+        AiScroll.ScrollToEnd();
+    }
+
+    private async void AiAsk_Click(object sender, RoutedEventArgs e)
+    {
+        var question = AiInput.Text.Trim();
+        if (string.IsNullOrWhiteSpace(question)) return;
+        AddAiMessage("You", question);
+        AiInput.Clear();
+        AiStatusText.Text = "Thinking…";
+        try
+        {
+            var payload = new { message = question, power = _aiPower, attachments = string.IsNullOrWhiteSpace(AiAttachment.Text) || AiAttachment.Text == "No attachment" ? Array.Empty<object>() : new[] { new { name = AiAttachment.Text, content = "Attachment selected in Airly Client" } } };
+            using var response = await _http.PostAsJsonAsync($"{ClientConfig.ApiBaseUrl}api/ai/helper", payload);
+            var result = await response.Content.ReadFromJsonAsync<AiHelperResponse>();
+            AddAiMessage("Airly Helper", result?.reply ?? "The aviation helper service did not return a response.");
+            AiStatusText.Text = response.IsSuccessStatusCode ? "Ready" : "Service unavailable";
+        }
+        catch (Exception ex) { AddAiMessage("Airly Helper", $"I could not reach the helper service: {ex.Message}"); AiStatusText.Text = "Offline"; }
+    }
+
+    private void AiEmoji_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.Tag is string emoji) { AiInput.SelectedText = emoji; AiInput.CaretIndex += emoji.Length; AiInput.Focus(); }
+    }
+
+    private void AiFile_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog { Multiselect = false, Filter = "Aviation data|*.txt;*.csv;*.json;*.xml;*.log|All files|*.*" };
+        if (dialog.ShowDialog() == true) { AiAttachment.Text = System.IO.Path.GetFileName(dialog.FileName); }
+    }
+
+    private string _aiPower = "Medium";
+
+    private void AiPower_Click(object sender, RoutedEventArgs e)
+    {
+        AiPowerBox.Focus();
+        AiPowerBox.IsDropDownOpen = true;
+    }
+
+    private void AiPower_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsInitialized || AiPowerBox.SelectedItem is not ComboBoxItem item) return;
+        var value = item.Content?.ToString() ?? "Medium Power";
+        _aiPower = value.StartsWith("Minimal", StringComparison.OrdinalIgnoreCase) ? "Minimal" : value.StartsWith("Extra", StringComparison.OrdinalIgnoreCase) ? "Extra" : "Medium";
+    }
+
+    private void AiInput_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None)
+        {
+            e.Handled = true;
+            AiAsk_Click(sender, new RoutedEventArgs());
+        }
+    }
+
+    private void LoadSettingsIntoUi()
+    {
+        SimBriefPilotIdBox.Text = _settings.SimBriefPilotId;
+        AirlyIdBox.Text = _settings.AirlyId;
+        UsernameBox.Text = _settings.Username;
+        SettingsAirlyIdBox.Text = _settings.AirlyId;
+        SettingsUsernameBox.Text = _settings.Username;
+        StartWithWindowsBox.IsChecked = _settings.StartWithWindows;
+        AutoConnectBox.IsChecked = _settings.AutoConnect;
+        EnableAtcAudioBox.IsChecked = _settings.EnableAtcAudio;
+        EnableMultiplayerBox.IsChecked = _settings.EnableMultiplayer;
+        AutomaticModelMatchingBox.IsChecked = _settings.AutomaticModelMatching;
+        _settings.ThemeMode = string.Equals(_settings.ThemeMode, "Bright", StringComparison.OrdinalIgnoreCase) ? "Bright" : "Dark";
+    }
+
+    private static readonly (string Name, string Hex)[] DarkPalette =
+    {
+        ("Default", "#80858B"), ("Ocean", "#1689B8"), ("Aurora", "#27B8A4"), ("Violet", "#8B5CF6"),
+        ("Rose", "#E05272"), ("Amber", "#D99119"), ("Emerald", "#22A06B"), ("Glacier", "#53B6D6"),
+        ("Coral", "#E56A4A"), ("Silver", "#AEB7C2")
+    };
+
+    private static readonly (string Name, string Hex)[] BrightPalette =
+    {
+        ("Default", "#7A7F84"), ("Ocean", "#087EA4"), ("Teal", "#087F8C"), ("Violet", "#7044C8"),
+        ("Rose", "#C83F75"), ("Amber", "#A96800"), ("Emerald", "#168653"), ("Sky", "#176D9C"),
+        ("Coral", "#B84427"), ("Slate", "#4B5563")
+    };
+
+    private void InitializeTheme()
+    {
+        ThemeModeBox.SelectedItem = ThemeModeBox.Items
+            .OfType<ComboBoxItem>()
+            .FirstOrDefault(item => string.Equals(item.Content?.ToString(), _settings.ThemeMode, StringComparison.OrdinalIgnoreCase))
+            ?? ThemeModeBox.Items[0];
+
+        PopulateAccentPalette(_settings.ThemeMode, _settings.AccentColor);
+        ApplyTheme();
+    }
+
+    private void ThemeModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsInitialized || ThemeModeBox.SelectedItem is not ComboBoxItem item) return;
+        var mode = item.Content?.ToString() == "Bright" ? "Bright" : "Dark";
+        _settings.ThemeMode = mode;
+        PopulateAccentPalette(mode, null);
+        ApplyTheme();
+    }
+
+    private void AccentColorBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!IsInitialized || AccentColorBox.SelectedItem is null) return;
+        var hex = ExtractPaletteHex(AccentColorBox.SelectedItem.ToString());
+        if (hex is null) return;
+        _settings.AccentColor = hex;
+        ApplyTheme();
+    }
+
+    private void PopulateAccentPalette(string mode, string? preferredHex)
+    {
+        var palette = string.Equals(mode, "Bright", StringComparison.OrdinalIgnoreCase) ? BrightPalette : DarkPalette;
+        var target = preferredHex;
+        AccentColorBox.Items.Clear();
+
+        foreach (var entry in palette)
+            AccentColorBox.Items.Add($"{entry.Name} — {entry.Hex}");
+
+        var selected = palette.FirstOrDefault(entry =>
+            string.Equals(entry.Hex, target, StringComparison.OrdinalIgnoreCase));
+
+        if (string.IsNullOrWhiteSpace(selected.Hex))
+            selected = palette[0];
+
+        AccentColorBox.SelectedItem = $"{selected.Name} — {selected.Hex}";
+        _settings.AccentColor = selected.Hex;
+    }
+
+    private static string? ExtractPaletteHex(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var marker = value.LastIndexOf('—');
+        if (marker < 0) return null;
+        var hex = value[(marker + 1)..].Trim();
+        return Regex.IsMatch(hex, "^#[0-9A-Fa-f]{6}$") ? hex : null;
+    }
+
+    private static string GetDefaultAccent(string mode) =>
+        string.Equals(mode, "Bright", StringComparison.OrdinalIgnoreCase) ? BrightPalette[0].Hex : DarkPalette[0].Hex;
+
+    private void ApplyTheme()
+    {
+        var bright = string.Equals(_settings.ThemeMode, "Bright", StringComparison.OrdinalIgnoreCase);
+        var accent = ParseColor(_settings.AccentColor, ParseColor(GetDefaultAccent(_settings.ThemeMode), Colors.Gray));
+
+        var window = bright ? "#F3F5F6" : "#0A0D11";
+        var sidebar = bright ? "#FFFFFF" : "#080B0F";
+        var glass = bright ? "#FFFFFF" : "#12171D";
+        var panel = bright ? "#FAFBFC" : "#151B22";
+        var input = bright ? "#F6F8F9" : "#0E1318";
+        var line = bright ? "#D8E0E4" : "#27303A";
+        var text = bright ? "#17232C" : "#F2F5F7";
+        var muted = bright ? "#62717B" : "#9BA7B1";
+        var accentSoft = Color.FromArgb(bright ? (byte)28 : (byte)48, accent.R, accent.G, accent.B);
+
+        SetBrush("WindowBrush", window);
+        SetBrush("SidebarBrush", sidebar);
+        SetBrush("GlassBrush", glass);
+        SetBrush("PanelBrush", panel);
+        SetBrush("InputBrush", input);
+        SetBrush("LineBrush", line);
+        SetBrush("TextBrush", text);
+        SetBrush("MutedBrush", muted);
+        SetBrush("AccentBrush", accent);
+        SetBrush("AccentSoftBrush", accentSoft);
+        SetBrush("SuccessBrush", bright ? "#167447" : "#62C995");
+        SetBrush("DangerBrush", bright ? "#B42318" : "#E68181");
+
+        Background = (Brush)Resources["WindowBrush"];
+        Foreground = (Brush)Resources["TextBrush"];
+    }
+
+    private void SetBrush(string key, string hex) =>
+        Resources[key] = new SolidColorBrush(ParseColor(hex, Colors.Transparent));
+
+    private void SetBrush(string key, Color color) =>
+        Resources[key] = new SolidColorBrush(color);
+
+    private static Color ParseColor(string hex, Color fallback) =>
+        ColorConverter.ConvertFromString(hex) is Color color ? color : fallback;
+
+    private void LoadDemoUiState()
+    {
+        FrequencyGrid.ItemsSource = Array.Empty<object>();
+        ChartList.ItemsSource = Array.Empty<object>();
+    }
+
+    private async void LoadFrequencies_Click(object sender, RoutedEventArgs e)
+    {
+        var icao = FrequencyAirportBox.Text.Trim().ToUpperInvariant();
+        if (icao.Length != 4) { FrequencyStatus.Text = "Enter a four-letter ICAO code."; return; }
+        FrequencyStatus.Text = "Loading worldwide airport frequency data...";
+        try
+        {
+            var frequencies = await _airportData.GetFrequenciesAsync(icao);
+            FrequencyGrid.ItemsSource = frequencies.Select(f => new
+            {
+                Airport = icao,
+                Position = f.Type ?? "Other",
+                Frequency = f.FrequencyMHz.ToString("0.000"),
+                Controller = f.Description ?? "—"
+            }).ToList();
+            FrequencyStatus.Text = frequencies.Count == 0 ? "No source frequencies are available for this airport." : $"{frequencies.Count} source frequencies loaded.";
+        }
+        catch (Exception ex) { FrequencyStatus.Text = $"Frequency service unavailable: {ex.Message}"; }
+    }
+
+    private async void LoadCharts_Click(object sender, RoutedEventArgs e)
+    {
+        var icao = ChartAirportBox.Text.Trim().ToUpperInvariant();
+        if (icao.Length != 4) { ChartStatus.Text = "Enter a four-letter ICAO code."; return; }
+        ChartStatus.Text = "Loading verified chart sources...";
+        try
+        {
+            var result = await _airportData.GetChartsAsync(icao);
+            ChartList.ItemsSource = result?.Charts ?? new List<AirportDataService.ChartSource>();
+            ChartStatus.Text = result?.Note ?? "No verified chart source returned.";
+            if (result?.Charts is { Count: > 0 })
+                ChartStatus.Text += $"  {result.Charts.Count} provider source(s) available.";
+        }
+        catch (Exception ex) { ChartStatus.Text = $"Chart service unavailable: {ex.Message}"; }
+    }
+
+    private void ChartOpen_Click(object sender, RoutedEventArgs e)
+    {
+        var url = (sender as Button)?.Tag?.ToString();
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+            Process.Start(new ProcessStartInfo(uri.ToString()) { UseShellExecute = true });
+    }
+
+    private void Nav_Click(object sender, RoutedEventArgs e)
+    {
+        var name = (sender as Button)?.Tag?.ToString() ?? "Dashboard";
+        var views = new Dictionary<string, UIElement>
+        {
+            ["Dashboard"] = DashboardView, ["Connect"] = ConnectView, ["Traffic"] = TrafficView, ["AiHelper"] = AiHelperView,
+            ["Tracking"] = TrackingView, ["Frequencies"] = FrequenciesView, ["Weather"] = WeatherView,
+            ["Charts"] = ChartsView, ["FlightPlan"] = FlightPlanView, ["Models"] = ModelsView, ["Settings"] = SettingsView
+        };
+
+        foreach (var view in views.Values)
+            view.Visibility = Visibility.Collapsed;
+
+        if (!views.TryGetValue(name, out var selected))
+            return;
+
+        selected.Visibility = Visibility.Visible;
+        selected.Opacity = 0;
+        selected.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180))
+        {
+            EasingFunction = new QuadraticEase { EasingMode = EasingMode.EaseOut }
+        });
+        PageTitle.Text = name switch
+        {
+            "Dashboard" => "Overview", "Tracking" => "Track Flights", "FlightPlan" => "Flight Plan",
+            "Frequencies" => "ATC Frequencies", "Weather" => "Weather / METAR", "Charts" => "Charts",
+            "Models" => "Model Matching", "AiHelper" => "Airly AI", _ => name
+        };
+        PageEyebrow.Text = name switch
+        {
+            "Tracking" => "LIVE FLIGHT TRACKING", "FlightPlan" => "DISPATCH", "Frequencies" => "AIR TRAFFIC CONTROL",
+            "Weather" => "FLIGHT OPERATIONS", "Charts" => "NAVIGATION", "Settings" => "CLIENT CONFIGURATION",
+            _ => "AIRLY NETWORK"
+        };
+        PageSubtitle.Text = name switch
+        {
+            "Tracking" => "Search and inspect aircraft on the Airly network",
+            "FlightPlan" => "Import the latest operational flight plan from SimBrief",
+            "Frequencies" => "Controller positions and authenticated frequency audio",
+            "Weather" => "Airport weather and METAR information",
+            "Charts" => "Airport and instrument procedure charts",
+            "AiHelper" => "A focused assistant for aviation questions and calculations",
+            _ => "Flight simulation network operations"
+        };
+    }
+
+    private async void Connect_Click(object sender, RoutedEventArgs e)
+    {
+        if (_connected) { Disconnect(); return; }
+        ConnectButton.IsEnabled = false;
+        ConnectStatus.Text = "Validating Airly membership…";
+
+        try
+        {
+            SaveSettingsFromUi();
+            var id = AirlyIdBox.Text.Trim();
+            var region = ((ComboBoxItem)RegionBox.SelectedItem)?.Content?.ToString() ?? "Europe";
+            if (string.IsNullOrWhiteSpace(id)) { ConnectStatus.Text = "Enter your Airly ID."; return; }
+
+            var response = await _http.PostAsJsonAsync($"{ClientConfig.ApiBaseUrl}api/client/activate", new { region, airlyId=id });
+            var result = await response.Content.ReadFromJsonAsync<ActivationResponse>();
+
+            if (!response.IsSuccessStatusCode || result is null || !result.Valid)
+            {
+                ConnectStatus.Text = result?.Message ?? "Activation service unavailable.";
+                return;
+            }
+
+            _connected = true;
+            SetConnectionState(true);
+            ConnectStatus.Text = "Authenticated. Realtime network session is ready.";
+        }
+        catch (Exception ex) { ConnectStatus.Text = $"Connection failed: {ex.Message}"; }
+        finally { ConnectButton.IsEnabled = true; }
+    }
+
+    private void Disconnect_Click(object sender, RoutedEventArgs e) => Disconnect();
+
+    private void Disconnect()
+    {
+        _connected = false;
+        SetConnectionState(false);
+        ConnectStatus.Text = "Disconnected from Airly.";
+    }
+
+    private void SetConnectionState(bool connected)
+    {
+        ConnectionLabel.Text = connected ? "CONNECTED" : "DISCONNECTED";
+        ConnectionLabel.Foreground = connected ? System.Windows.Media.Brushes.LightGreen : System.Windows.Media.Brushes.LightPink;
+        TopStatusText.Text = connected ? "ONLINE" : "OFFLINE";
+        TopStatusText.Foreground = connected ? System.Windows.Media.Brushes.LightGreen : System.Windows.Media.Brushes.LightPink;
+        NetworkStatus.Text = connected ? "Online" : "Offline";
+        OwnAircraft.Text = connected ? "Ready" : "Offline";
+        ConnectButton.Content = connected ? "Disconnect" : "Connect";
+        TrafficCount.Text = _traffic.Count.ToString();
+        ActivityText.Text = connected
+            ? "Connected. Traffic, ATC, voice and simulator state can synchronize through the Airly realtime service."
+            : "Connect to Airly to receive live traffic, ATC and network data.";
+    }
+
+    private async void ImportSimBrief_Click(object sender, RoutedEventArgs e)
+    {
+        SaveSettingsFromUi();
+        var pilotId = _settings.SimBriefPilotId.Trim();
+
+        if (string.IsNullOrWhiteSpace(pilotId))
+        {
+            FlightPlanStatus.Text = "Add your SimBrief Pilot ID in Settings first.";
+            Nav_Click(new Button { Tag = "Settings" }, new RoutedEventArgs());
+            return;
+        }
+
+        FlightPlanStatus.Text = "Fetching your latest SimBrief OFP…";
+
+        try
+        {
+            var url = $"https://www.simbrief.com/api/xml.fetcher.php?userid={Uri.EscapeDataString(pilotId)}&json=v2";
+            using var response = await _http.GetAsync(url);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                FlightPlanStatus.Text = $"SimBrief returned HTTP {(int)response.StatusCode}. Generate a flight plan in SimBrief and try again.";
+                return;
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            _flightPlan = SimBriefFlightPlan.FromJson(json, pilotId);
+            ApplyFlightPlan(_flightPlan);
+            FlightPlanStatus.Text = $"Imported {_flightPlan.Callsign} from SimBrief. This import only occurs when you press the button.";
+            RefreshTracking();
+        }
+        catch (JsonException)
+        {
+            FlightPlanStatus.Text = "SimBrief returned data that Airly could not parse.";
+        }
+        catch (Exception ex)
+        {
+            FlightPlanStatus.Text = $"SimBrief import failed: {ex.Message}";
+        }
+    }
+
+    private void ApplyFlightPlan(SimBriefFlightPlan plan)
+    {
+        PlanCallsign.Text = plan.Callsign;
+        PlanRoute.Text = $"{plan.Origin} → {plan.Destination}";
+        PlanCruise.Text = FormatAltitude(plan.CruiseAltitudeFeet);
+        PlanAirports.Text = $"{plan.Origin} → {plan.Destination}";
+        PlanAircraft.Text = string.IsNullOrWhiteSpace(plan.Aircraft) ? "—" : plan.Aircraft;
+        PlanRegistration.Text = string.IsNullOrWhiteSpace(plan.Registration) ? "—" : plan.Registration;
+        PlanAlternate.Text = string.IsNullOrWhiteSpace(plan.Alternate) ? "—" : plan.Alternate;
+        PlanTimes.Text = $"{plan.DepartureTime} → {plan.ArrivalTime}";
+        PlanAirac.Text = string.IsNullOrWhiteSpace(plan.Airac) ? "—" : plan.Airac;
+        PlanFullRoute.Text = plan.RouteSummary;
+        DashboardRoute.Text = $"{plan.Origin} → {plan.Destination}";
+        DashboardCruise.Text = FormatAltitude(plan.CruiseAltitudeFeet);
+        DashboardCallsign.Text = plan.Callsign;
+    }
+
+    private void RefreshTracking()
+    {
+        _trackedFlights.Clear();
+
+        foreach (var aircraft in _traffic)
+        {
+            var planMatches = _flightPlan is not null &&
+                              string.Equals(aircraft.Callsign, _flightPlan.Callsign, StringComparison.OrdinalIgnoreCase);
+
+            _trackedFlights.Add(new TrackedFlight(
+                aircraft.Callsign,
+                aircraft.ModelCode,
+                planMatches ? _flightPlan!.Registration : string.Empty,
+                planMatches ? _flightPlan!.Origin : "—",
+                planMatches ? _flightPlan!.Destination : "—",
+                planMatches ? _flightPlan!.RouteSummary : "—",
+                aircraft.Latitude,
+                aircraft.Longitude,
+                aircraft.AltitudeFeet,
+                aircraft.GroundSpeedKnots,
+                aircraft.HeadingDegrees,
+                aircraft.VerticalSpeedFeetPerMinute,
+                planMatches ? _flightPlan!.CruiseAltitudeFeet : 0,
+                aircraft.Frequency ?? "—",
+                aircraft.VerticalSpeedFeetPerMinute > 300 ? "CLIMB" : aircraft.VerticalSpeedFeetPerMinute < -300 ? "DESCENT" : "CRUISE",
+                string.Empty,
+                BuildJetPhotosSearchUrl(planMatches ? _flightPlan!.Registration : aircraft.Callsign)));
+        }
+    }
+
+    private void TrackingSearch_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        var query = TrackingSearchBox.Text.Trim();
+        TrackingGrid.ItemsSource = string.IsNullOrWhiteSpace(query)
+            ? _trackedFlights
+            : _trackedFlights.Where(f =>
+                f.Callsign.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                f.Aircraft.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                f.Origin.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                f.Destination.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
+    }
+
+    private void ClearTracking_Click(object sender, RoutedEventArgs e)
+    {
+        TrackingSearchBox.Clear();
+        TrackingGrid.ItemsSource = _trackedFlights;
+    }
+
+    private void TrackingGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        _selectedFlight = TrackingGrid.SelectedItem as TrackedFlight;
+        if (_selectedFlight is null)
+        {
+            TrackCallsign.Text = "Select a flight";
+            TrackAircraft.Text = "—";
+            JetPhotosButton.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        TrackCallsign.Text = _selectedFlight.Callsign;
+        TrackAircraft.Text = string.IsNullOrWhiteSpace(_selectedFlight.Registration)
+            ? _selectedFlight.Aircraft
+            : $"{_selectedFlight.Aircraft} • {_selectedFlight.Registration}";
+        TrackRoute.Text = $"{_selectedFlight.Origin} → {_selectedFlight.Destination}";
+        TrackPosition.Text = $"{_selectedFlight.Latitude:F4}, {_selectedFlight.Longitude:F4}";
+        TrackHeading.Text = $"{_selectedFlight.HeadingDegrees:000}°";
+        TrackAltitude.Text = FormatAltitude(_selectedFlight.AltitudeFeet);
+        TrackCruise.Text = _selectedFlight.CruiseAltitudeFeet > 0 ? FormatAltitude(_selectedFlight.CruiseAltitudeFeet) : "Not in plan";
+        TrackSpeed.Text = $"{_selectedFlight.GroundSpeedKnots:N0} kt";
+        PhotoStatus.Text = string.IsNullOrWhiteSpace(_selectedFlight.PhotoUrl)
+            ? "JetPhotos search is available for this aircraft."
+            : "Photo source: JetPhotos";
+        JetPhotosButton.Tag = _selectedFlight.PhotoSourceUrl;
+        JetPhotosButton.Visibility = Visibility.Visible;
+    }
+
+    private void JetPhotos_Click(object sender, RoutedEventArgs e)
+    {
+        var url = (sender as Button)?.Tag?.ToString();
+        if (!string.IsNullOrWhiteSpace(url))
+            Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+    }
+
+    private async void Weather_Click(object sender, RoutedEventArgs e)
+    {
+        var icao = AirportSearchBox.Text.Trim().ToUpperInvariant();
+        if (icao.Length != 4) { MetarText.Text = "Enter a four-letter ICAO airport code."; return; }
+        MetarText.Text = "Loading METAR…";
+        WeatherDetails.Text = "";
+        try
+        {
+            using var response = await _http.GetAsync($"{ClientConfig.ApiBaseUrl}api/weather/metar?icao={Uri.EscapeDataString(icao)}", HttpCompletionOption.ResponseHeadersRead);
+            if (!response.IsSuccessStatusCode) { MetarText.Text = $"METAR unavailable (HTTP {(int)response.StatusCode})."; return; }
+            var payload = await response.Content.ReadFromJsonAsync<MetarEnvelope>();
+            var observation = payload?.Metar?.FirstOrDefault();
+            if (observation is null) { MetarText.Text = $"No current METAR is available for {icao}."; return; }
+
+            WeatherStation.Text = observation.IcaoId ?? icao;
+            WeatherName.Text = observation.Name ?? "Airport weather station";
+            WeatherCategory.Text = observation.FltCat ?? "—";
+            WeatherObserved.Text = FormatUtcObservation(observation.ReportTime, observation.ObsTime);
+            WeatherWind.Text = FormatWind(observation.Wdir, observation.Wspd, observation.Wgst);
+            WeatherVisibility.Text = string.IsNullOrWhiteSpace(observation.Visib) ? "—" : observation.Visib + " SM";
+            WeatherTemperature.Text = FormatCelsius(observation.Temp);
+            WeatherDewpoint.Text = FormatCelsius(observation.Dewp);
+            WeatherPressure.Text = observation.Altim is null ? "—" : $"{observation.Altim:0.0} hPa";
+            WeatherClouds.Text = FormatClouds(observation.Clouds);
+            WeatherPhenomena.Text = string.IsNullOrWhiteSpace(observation.WxString) ? "No significant weather reported" : observation.WxString;
+            MetarText.Text = observation.RawOb ?? "Raw METAR unavailable";
+            WeatherDetails.Text = $"Observed {FormatUtcObservation(observation.ReportTime, observation.ObsTime)} • {observation.Name ?? icao} • Source: AviationWeather.gov";
+        }
+        catch (Exception ex)
+        {
+            MetarText.Text = "Unable to reach the Airly weather service.";
+            WeatherDetails.Text = ex.Message;
+        }
+    }
+
+    private void InitializeModelMatching()
+    {
+        _communityFolder = ModelMatchingInstaller.FindCommunityFolders().FirstOrDefault();
+        ModelCommunityPath.Text = _communityFolder ?? "No default Community folder found. Use Choose Community.";
+        ModelInstallButton.IsEnabled = !string.IsNullOrWhiteSpace(_communityFolder);
+    }
+
+    private void ChooseCommunity_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFolderDialog { Title = "Select your Microsoft Flight Simulator Community folder", Multiselect = false };
+        if (dialog.ShowDialog(this) != true) return;
+        var selected = dialog.FolderName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!string.Equals(new DirectoryInfo(selected).Name, "Community", StringComparison.OrdinalIgnoreCase))
+        {
+            ModelStatus.Text = "Select the Community folder itself.";
+            return;
+        }
+        _communityFolder = selected;
+        ModelCommunityPath.Text = selected;
+        ModelInstallButton.IsEnabled = true;
+        ModelStatus.Text = "Community folder selected.";
+    }
+
+    private void OpenCommunity_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(_communityFolder) && Directory.Exists(_communityFolder))
+            Process.Start(new ProcessStartInfo(_communityFolder) { UseShellExecute = true });
+        else
+            ModelStatus.Text = "Select a valid Community folder first.";
+    }
+
+    private async void InstallModels_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(_communityFolder))
+        {
+            ChooseCommunity_Click(sender, e);
+            if (string.IsNullOrWhiteSpace(_communityFolder)) return;
+        }
+
+        ModelInstallButton.IsEnabled = false;
+        ModelProgressBar.Visibility = Visibility.Visible;
+        ModelProgressBar.Value = 0;
+        ModelProgressText.Text = "Preparing FSLTL download…";
+        ModelStatus.Text = "Downloading the latest FSLTL Traffic Base Models release.";
+        try
+        {
+            var progress = new Progress<double>(value =>
+            {
+                ModelProgressBar.Value = value;
+                ModelProgressText.Text = value >= 99.9 ? "Extracting and installing into Community…" : $"Downloading… {value:0}%";
+            });
+            var installedPath = await _modelInstaller.InstallLatestFslTlAsync(_communityFolder!, progress);
+            ModelProgressText.Text = "Installation complete.";
+            ModelStatus.Text = $"FSLTL model package installed: {installedPath}";
+        }
+        catch (Exception ex)
+        {
+            ModelProgressText.Text = "";
+            ModelStatus.Text = $"Model matching install failed: {ex.Message}";
+        }
+        finally { ModelInstallButton.IsEnabled = true; }
+    }
+
+    private void SaveSettings_Click(object sender, RoutedEventArgs e)
+    {
+        SaveSettingsFromUi();
+        SettingsStatus.Text = "Settings saved locally.";
+    }
+
+    private void SaveSettingsFromUi()
+    {
+        _settings.SimBriefPilotId = SimBriefPilotIdBox.Text.Trim();
+        _settings.AirlyId = SettingsAirlyIdBox.Text.Trim();
+        _settings.Username = SettingsUsernameBox.Text.Trim();
+        _settings.StartWithWindows = StartWithWindowsBox.IsChecked == true;
+        _settings.AutoConnect = AutoConnectBox.IsChecked == true;
+        _settings.EnableAtcAudio = EnableAtcAudioBox.IsChecked == true;
+        _settings.EnableMultiplayer = EnableMultiplayerBox.IsChecked == true;
+        _settings.AutomaticModelMatching = AutomaticModelMatchingBox.IsChecked == true;
+        _settings.ThemeMode = ThemeModeBox.SelectedItem is ComboBoxItem themeItem ? themeItem.Content?.ToString() ?? "Dark" : "Dark";
+        _settings.AccentColor = ExtractPaletteHex(AccentColorBox.SelectedItem?.ToString()) ?? GetDefaultAccent(_settings.ThemeMode);
+        AirlyIdBox.Text = _settings.AirlyId;
+        UsernameBox.Text = _settings.Username;
+        _settings.Save();
+    }
+
+    private void InitializeClientMetrics()
+    {
+        _lastFpsTick = Stopwatch.GetTimestamp();
+        CompositionTarget.Rendering += CompositionTarget_Rendering;
+        _metricsTimer.Tick += async (_, _) => await UpdateLatencyAsync();
+        _metricsTimer.Start();
+        _ = UpdateLatencyAsync();
+    }
+
+    private void CompositionTarget_Rendering(object? sender, EventArgs e)
+    {
+        _renderFrames++;
+        var now = Stopwatch.GetTimestamp();
+        var elapsed = (now - _lastFpsTick) / (double)Stopwatch.Frequency;
+        if (elapsed >= 1)
+        {
+            var fps = _renderFrames / elapsed;
+            _renderFrames = 0;
+            _lastFpsTick = now;
+            FpsText.Text = $"  •  FPS {fps:0}";
+            HeaderFpsText.Text = $"  •  FPS {fps:0}";
+        }
+    }
+
+    private async Task UpdateLatencyAsync()
+    {
+        if (_metricsRequestRunning) return;
+        _metricsRequestRunning = true;
+        try
+        {
+            var stopwatch = Stopwatch.StartNew();
+            using var response = await _http.GetAsync($"{ClientConfig.ApiBaseUrl}api/ping", HttpCompletionOption.ResponseHeadersRead);
+            stopwatch.Stop();
+            if (response.IsSuccessStatusCode)
+            {
+                var value = $"{stopwatch.Elapsed.TotalMilliseconds:0} ms";
+                LatencyText.Text = $"Latency {value}";
+                HeaderLatencyText.Text = $"LATENCY {value}";
+            }
+            else
+            {
+                LatencyText.Text = "Latency —";
+                HeaderLatencyText.Text = "LATENCY —";
+            }
+        }
+        catch
+        {
+            LatencyText.Text = "Latency —";
+            HeaderLatencyText.Text = "LATENCY —";
+        }
+        finally { _metricsRequestRunning = false; }
+    }
+
+    private void TryLoadApplicationIcon()
+    {
+        try
+        {
+            var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Airly.ico");
+            if (File.Exists(iconPath))
+                Icon = new BitmapImage { UriSource = new Uri(iconPath, UriKind.Absolute), CacheOption = BitmapCacheOption.OnLoad };
+        }
+        catch { }
+    }
+
+    private static string FormatUtcObservation(string? reportTime, long? obsTime)
+    {
+        if (DateTimeOffset.TryParse(reportTime, out var parsed)) return parsed.UtcDateTime.ToString("dd MMM HH:mm'Z'");
+        if (obsTime is long unix) return DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime.ToString("dd MMM HH:mm'Z'");
+        return "Observation time unavailable";
+    }
+
+    private static string FormatWind(int? direction, double? speed, double? gust)
+    {
+        if (direction is null && speed is null) return "—";
+        var dir = direction is null ? "VRB" : direction.Value.ToString("000") + "°";
+        var text = $"{dir} {speed.GetValueOrDefault():0} kt";
+        if (gust is > 0) text += $" G{gust:0}";
+        return text;
+    }
+
+    private static string FormatCelsius(double? value) => value is null ? "—" : $"{value:0.0} °C";
+
+    private static string FormatClouds(List<CloudLayer>? clouds)
+    {
+        if (clouds is null || clouds.Count == 0) return "Clear / not reported";
+        return string.Join("  •  ", clouds.Select(c => string.IsNullOrWhiteSpace(c.Cover) ? "Cloud layer" : $"{c.Cover} {(c.Base is null ? "" : $"{c.Base:N0} ft")}".Trim()));
+    }
+
+    private static string FormatAltitude(double feet)
+    {
+        if (feet <= 0) return "—";
+        return $"{Math.Round(feet / 100.0) * 100:N0} ft";
+    }
+
+    private static string BuildJetPhotosSearchUrl(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "https://www.jetphotos.com/";
+        return $"https://www.jetphotos.com/search?keywords={Uri.EscapeDataString(value)}";
+    }
+
+    private sealed record MetarEnvelope(bool Ok, string? Source, string Icao, DateTimeOffset FetchedAt, List<MetarObservation>? Metar);
+    private sealed record MetarObservation(string? IcaoId, string? Name, string? ReportTime, long? ObsTime, double? Temp, double? Dewp, int? Wdir, double? Wspd, double? Wgst, string? Visib, double? Altim, string? WxString, string? FltCat, string? RawOb, List<CloudLayer>? Clouds);
+    private sealed record CloudLayer(string? Cover, double? Base);
+
+    private sealed record ActivationResponse(bool Valid, string Message);
+
+    private sealed class AiHelperResponse
+    {
+        public string? reply { get; set; }
+    }
+}
