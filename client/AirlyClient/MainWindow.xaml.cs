@@ -11,6 +11,7 @@ using System.Text.Json.Serialization;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -613,7 +614,7 @@ public partial class MainWindow : Window
                 planMatches ? _flightPlan!.CruiseAltitudeFeet : 0,
                 "—",
                 aircraft.VerticalSpeedFeetPerMinute > 300 ? "CLIMB" : aircraft.VerticalSpeedFeetPerMinute < -300 ? "DESCENT" : aircraft.OnGround ? "GROUND" : "CRUISE",
-                string.Empty, BuildJetPhotosSearchUrl(planMatches ? _flightPlan!.Registration : aircraft.Callsign),
+                string.Empty, BuildJetPhotosSearchUrl(planMatches ? _flightPlan!.Registration : (aircraft.Callsign ?? aircraft.Icao24)),
                 aircraft.Country, aircraft.OnGround, aircraft.Icao24, aircraft.LastContact));
         }
         TrackingGrid.ItemsSource = _trackedFlights;
