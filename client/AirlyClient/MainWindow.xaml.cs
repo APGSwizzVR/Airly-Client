@@ -222,7 +222,7 @@ public partial class MainWindow : Window
         Resources[key] = new SolidColorBrush(color);
 
     private static Color ParseColor(string hex, Color fallback) =>
-        new ColorConverter().ConvertFromString(hex) is Color color ? color : fallback;
+        ColorConverter.ConvertFromString(hex) is Color color ? color : fallback;
 
     private void LoadDemoUiState()
     {
