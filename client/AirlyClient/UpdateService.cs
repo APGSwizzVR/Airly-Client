@@ -59,9 +59,20 @@ public sealed class UpdateService
     {
         var current = Environment.ProcessPath;
         if (string.IsNullOrWhiteSpace(current) || !File.Exists(current)) return;
+
         var updater = Path.Combine(Path.GetTempPath(), "AirlyUpdater-" + Guid.NewGuid().ToString("N") + ".exe");
         File.Copy(current, updater, true);
-        Process.Start(new ProcessStartInfo { FileName = updater, Arguments = "--airly-update " + Environment.ProcessId + " "" + installerPath.Replace(""", """") + """, UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(updater) });
+
+        var start = new ProcessStartInfo
+        {
+            FileName = updater,
+            UseShellExecute = true,
+            WorkingDirectory = Path.GetDirectoryName(updater)
+        };
+        start.ArgumentList.Add("--airly-update");
+        start.ArgumentList.Add(Environment.ProcessId.ToString());
+        start.ArgumentList.Add(installerPath);
+        Process.Start(start);
     }
 
     public static bool IsUpdaterLaunch(string[] args) => args.Length >= 3 && string.Equals(args[0], "--airly-update", StringComparison.OrdinalIgnoreCase);
