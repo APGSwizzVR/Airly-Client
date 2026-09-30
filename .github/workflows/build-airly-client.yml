@@ -19,6 +19,17 @@ jobs:
           dotnet-version: "8.0.x"
       - name: Publish EXE
         run: dotnet publish client/AirlyClient/AirlyClient.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o publish
+      - name: Smoke test published EXE
+        shell: pwsh
+        run: |
+          $exe = Join-Path $env:GITHUB_WORKSPACE "publish\AirlyClient.exe"
+          if (!(Test-Path $exe)) { throw "Published EXE not found: $exe" }
+          $process = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
+          if ($process.HasExited) { throw "AirlyClient.exe exited during startup with code $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force
+          Write-Host "AirlyClient.exe startup smoke test passed."
+
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
       - name: Build installer
