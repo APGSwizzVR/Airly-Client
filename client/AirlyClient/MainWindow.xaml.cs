@@ -93,10 +93,7 @@ public partial class MainWindow : Window
         var panel = new StackPanel();
         var inCode = false;
         var code = new List<string>();
-        foreach (var raw in markdown.Replace("
-", "
-").Split('
-'))
+        foreach (var raw in markdown.Replace("\r\n", "\n").Split('\n'))
         {
             var line = raw.TrimEnd();
             if (line.Trim().StartsWith(new string('`', 3), StringComparison.Ordinal))
