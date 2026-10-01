@@ -594,6 +594,15 @@ public partial class MainWindow : Window
 
 
 
+    private void SetBrush(string key, string hex) =>
+        Resources[key] = new SolidColorBrush(ParseColor(hex, Colors.Transparent));
+
+    private void SetBrush(string key, Color color) =>
+        Resources[key] = new SolidColorBrush(color);
+
+    private static Color ParseColor(string hex, Color fallback) =>
+        ColorConverter.ConvertFromString(hex) is Color color ? color : fallback;
+
     private void LoadDemoUiState()
     {
         FrequencyGrid.ItemsSource = Array.Empty<object>();
