@@ -588,30 +588,11 @@ public partial class MainWindow : Window
         Background = (Brush)Resources["WindowBrush"]; Foreground = (Brush)Resources["TextBrush"];
     }
 
-    private void SaveSettings_Click(object sender, RoutedEventArgs e)
-    {
-        SaveSettingsFromUi(); SettingsStatus.Text = "Settings saved. The selected theme and preferences are now active.";
-    }
 
-    private void ResetSettings_Click(object sender, RoutedEventArgs e)
-    {
-        LoadSettingsIntoUi(); SettingsStatus.Text = "Staged changes reset to the last saved settings.";
-    }
 
-    private void SaveSettingsFromUi()
-    {
-        _settings.SimBriefPilotId = SimBriefPilotIdBox.Text.Trim(); _settings.AirlyId = SettingsAirlyIdBox.Text.Trim(); _settings.Username = SettingsUsernameBox.Text.Trim();
-        _settings.StartWithWindows = StartWithWindowsBox.IsChecked == true; _settings.AutoConnect = AutoConnectBox.IsChecked == true;
-        _settings.EnableAtcAudio = EnableAtcAudioBox.IsChecked == true; _settings.EnableMultiplayer = EnableMultiplayerBox.IsChecked == true; _settings.AutomaticModelMatching = AutomaticModelMatchingBox.IsChecked == true;
-        _settings.ReduceAnimations = ReduceAnimationsBox.IsChecked == true; _settings.LimitFps = LimitFpsBox.IsChecked == true; _settings.LowBandwidth = LowBandwidthBox.IsChecked == true;
-        _settings.HardwareAcceleration = HardwareAccelerationBox.IsChecked == true; _settings.CacheMapTiles = CacheMapTilesBox.IsChecked == true; _settings.CompactTraffic = CompactTrafficBox.IsChecked == true;
-        _settings.EnableSoundEffects = EnableSoundEffectsBox.IsChecked == true; _settings.PushToTalk = PushToTalkBox.IsChecked == true; _settings.VoiceVolume = (int)Math.Round(VoiceVolumeSlider.Value);
-        _settings.NetworkUpdateRate = (NetworkUpdateRateBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Balanced";
-        _settings.UiScalePercent = int.TryParse(((UiScaleBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "100%").TrimEnd('%'), out var scale) ? scale : 100;
-        _settings.AutomaticUpdates = AutomaticUpdatesBox.IsChecked == true; _settings.ShowReleaseNotes = ReleaseNotesBox.IsChecked == true;
-        _settings.ThemeMode = _pendingThemeMode; _settings.AccentColor = _pendingAccentColor; AirlyIdBox.Text = _settings.AirlyId; UsernameBox.Text = _settings.Username;
-        _settings.Save(); ApplyTheme(); UpdateThemeSelectionVisuals();
-    }
+
+
+
 
     private void LoadDemoUiState()
     {
@@ -1156,7 +1137,14 @@ window.addEventListener('resize',()=>map.invalidateSize());
     private void SaveSettings_Click(object sender, RoutedEventArgs e)
     {
         SaveSettingsFromUi();
-        SettingsStatus.Text = "Settings saved locally.";
+        SettingsStatus.Text = "Settings saved. The selected theme and preferences are now active.";
+    }
+
+
+    private void ResetSettings_Click(object sender, RoutedEventArgs e)
+    {
+        LoadSettingsIntoUi();
+        SettingsStatus.Text = "Staged changes reset to the last saved settings.";
     }
 
     private void SaveSettingsFromUi()
@@ -1169,12 +1157,28 @@ window.addEventListener('resize',()=>map.invalidateSize());
         _settings.EnableAtcAudio = EnableAtcAudioBox.IsChecked == true;
         _settings.EnableMultiplayer = EnableMultiplayerBox.IsChecked == true;
         _settings.AutomaticModelMatching = AutomaticModelMatchingBox.IsChecked == true;
-        _settings.ThemeMode = ThemeModeBox.SelectedItem is ComboBoxItem themeItem ? themeItem.Content?.ToString() ?? "Dark" : "Dark";
-        _settings.AccentColor = ExtractPaletteHex(AccentColorBox.SelectedItem?.ToString()) ?? GetDefaultAccent(_settings.ThemeMode);
+        _settings.ReduceAnimations = ReduceAnimationsBox.IsChecked == true;
+        _settings.LimitFps = LimitFpsBox.IsChecked == true;
+        _settings.LowBandwidth = LowBandwidthBox.IsChecked == true;
+        _settings.HardwareAcceleration = HardwareAccelerationBox.IsChecked == true;
+        _settings.CacheMapTiles = CacheMapTilesBox.IsChecked == true;
+        _settings.CompactTraffic = CompactTrafficBox.IsChecked == true;
+        _settings.EnableSoundEffects = EnableSoundEffectsBox.IsChecked == true;
+        _settings.PushToTalk = PushToTalkBox.IsChecked == true;
+        _settings.VoiceVolume = (int)Math.Round(VoiceVolumeSlider.Value);
+        _settings.NetworkUpdateRate = (NetworkUpdateRateBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Balanced";
+        _settings.UiScalePercent = int.TryParse(((UiScaleBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "100%").TrimEnd('%'), out var scale) ? scale : 100;
+        _settings.AutomaticUpdates = AutomaticUpdatesBox.IsChecked == true;
+        _settings.ShowReleaseNotes = ReleaseNotesBox.IsChecked == true;
+        _settings.ThemeMode = _pendingThemeMode;
+        _settings.AccentColor = _pendingAccentColor;
         AirlyIdBox.Text = _settings.AirlyId;
         UsernameBox.Text = _settings.Username;
         _settings.Save();
+        ApplyTheme();
+        UpdateThemeSelectionVisuals();
     }
+
 
     private void InitializeClientMetrics()
     {
