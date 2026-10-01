@@ -204,14 +204,88 @@
 
                 <Grid x:Name="AiHelperView" Visibility="Collapsed">
   <Grid>
-    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <StackPanel Margin="4,0,0,14"><TextBlock Text="AIRLY AI" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/><TextBlock Text="Aviation assistant" FontSize="28" FontWeight="SemiBold" Margin="0,3,0,0"/><TextBlock Text="Ask about flight planning, ATC, aircraft, weather, navigation or aviation calculations." FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,4,0,0"/></StackPanel>
-    <Border Grid.Row="1" Background="{DynamicResource WindowBrush}"><ScrollViewer x:Name="AiScroll" VerticalScrollBarVisibility="Auto" Padding="4,0,12,8"><StackPanel x:Name="AiMessages" MaxWidth="860" HorizontalAlignment="Center"/></ScrollViewer></Border>
-    <Border Grid.Row="2" Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="18" Padding="8" Margin="0,12,0,0"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="38"/><ColumnDefinition Width="42"/><ColumnDefinition Width="*"/><ColumnDefinition Width="118"/><ColumnDefinition Width="44"/></Grid.ColumnDefinitions><Button Grid.Column="0" Content="😊" Tag="😊" Click="AiEmoji_Click" Width="34" Height="34" Style="{StaticResource SecondaryButton}" BorderThickness="0"/><Button Grid.Column="1" Content="＋" Click="AiFile_Click" Width="34" Height="34" Style="{StaticResource SecondaryButton}" BorderThickness="0"/><TextBox Grid.Column="2" x:Name="AiInput" BorderThickness="0" Background="Transparent" MinHeight="38" MaxHeight="150" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="8,8" ToolTip="Message Airly AI" KeyDown="AiInput_KeyDown"/><ComboBox Grid.Column="3" x:Name="AiPowerBox" Height="34" Margin="6,0,4,0" SelectedIndex="1" SelectionChanged="AiPower_SelectionChanged"><ComboBoxItem Content="Minimal"/><ComboBoxItem Content="Medium"/><ComboBoxItem Content="Extra"/></ComboBox><Button Grid.Column="4" Content="↑" Click="AiAsk_Click" Width="36" Height="36" Style="{StaticResource PrimaryButton}" ToolTip="Send"/></Grid></Border>
-    <TextBlock x:Name="AiAttachment" Text="No attachment" Grid.Row="2" Visibility="Collapsed"/>
-    <TextBlock x:Name="AiStatusText" Text="Ready" Grid.Row="2" HorizontalAlignment="Right" Margin="0,-18,55,0" Foreground="{StaticResource MutedBrush}" FontSize="10"/>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition x:Name="AiHistoryColumn" Width="250"/>
+      <ColumnDefinition Width="*"/>
+    </Grid.ColumnDefinitions>
+
+    <Border Grid.Column="0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,1,0" Padding="12">
+      <Grid>
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="Auto"/>
+          <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        <DockPanel Margin="0,0,0,12">
+          <TextBlock Text="Chats" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          <Button DockPanel.Dock="Right" Content="＋" Width="34" Height="34" Click="AiNewChat_Click" Style="{StaticResource SecondaryButton}" BorderThickness="0" ToolTip="New chat"/>
+        </DockPanel>
+        <Button Grid.Row="1" Content="＋  New chat" Height="38" HorizontalContentAlignment="Left" Padding="12,0" Click="AiNewChat_Click" Style="{StaticResource SecondaryButton}" Margin="0,0,0,10"/>
+        <ListBox Grid.Row="2" x:Name="AiChatList" BorderThickness="0" Background="Transparent" SelectionChanged="AiChatList_SelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <Border Padding="10,9" Margin="0,0,0,4" CornerRadius="10" Background="{DynamicResource InputBrush}">
+                <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextBrush}"/>
+              </Border>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+      </Grid>
+    </Border>
+
+    <Grid Grid.Column="1">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+
+      <Grid Grid.Row="0" Height="58" Margin="0,0,0,1">
+        <Button x:Name="AiHistoryToggle" Content="‹" Width="38" Height="38" HorizontalAlignment="Left" VerticalAlignment="Center" Click="AiHistoryToggle_Click" Style="{StaticResource SecondaryButton}" BorderThickness="0" ToolTip="Hide chat history"/>
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+          <TextBlock Text="Airly AI" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+          <TextBlock Text="Aviation assistant" FontSize="10" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center" Margin="0,1,0,0"/>
+        </StackPanel>
+      </Grid>
+
+      <ScrollViewer Grid.Row="1" x:Name="AiScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,8,20,28">
+        <StackPanel x:Name="AiMessages" MaxWidth="900" HorizontalAlignment="Center"/>
+      </ScrollViewer>
+
+      <StackPanel Grid.Row="2" MaxWidth="900" HorizontalAlignment="Center" Width="900" Margin="20,8,20,18">
+        <TextBlock x:Name="AiStatusText" Text="Ready" HorizontalAlignment="Center" Foreground="{DynamicResource MutedBrush}" FontSize="10" Margin="0,0,0,7"/>
+        <Border Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="18" Padding="8">
+          <Grid>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="Auto"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock x:Name="AiAttachment" Text="No attachment" Grid.Row="0" Visibility="Collapsed"/>
+            <Grid Grid.Row="1">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="42"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="92"/>
+                <ColumnDefinition Width="42"/>
+                <ColumnDefinition Width="42"/>
+              </Grid.ColumnDefinitions>
+              <Button Grid.Column="0" Content="＋" Click="AiFile_Click" Width="36" Height="36" Style="{StaticResource SecondaryButton}" BorderThickness="0" ToolTip="Upload a file"/>
+              <TextBox Grid.Column="1" x:Name="AiInput" BorderThickness="0" Background="Transparent" MinHeight="42" MaxHeight="180" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="8,9" ToolTip="Message Airly AI" KeyDown="AiInput_KeyDown"/>
+              <ComboBox Grid.Column="2" x:Name="AiPowerBox" Height="34" Margin="6,4,4,0" VerticalAlignment="Top" SelectedIndex="1" SelectionChanged="AiPower_SelectionChanged">
+                <ComboBoxItem Content="Fast"/>
+                <ComboBoxItem Content="Medium"/>
+                <ComboBoxItem Content="Extra"/>
+              </ComboBox>
+              <Button Grid.Column="3" Content="☺" Tag="☺" Click="AiEmoji_Click" Width="36" Height="36" Style="{StaticResource SecondaryButton}" BorderThickness="0" ToolTip="Insert emoji"/>
+              <Button Grid.Column="4" Content="↑" Click="AiAsk_Click" Width="36" Height="36" Style="{StaticResource PrimaryButton}" ToolTip="Send"/>
+            </Grid>
+          </Grid>
+        </Border>
+      </StackPanel>
+    </Grid>
   </Grid>
 </Grid>
+
 <Grid x:Name="SettingsView" Visibility="Collapsed"><Border Style="{StaticResource Card}"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel MaxWidth="760"><TextBlock Text="Settings" Style="{StaticResource SectionTitle}"/><TextBlock Text="Client preferences are stored locally on this Windows installation." Foreground="{StaticResource MutedBrush}" Margin="0,6,0,10"/><TextBlock Text="SIMBRIEF" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,18,0,0"/><TextBlock Text="Pilot ID" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SimBriefPilotIdBox" Height="36"/><TextBlock Text="Your SimBrief Pilot ID is used only when you explicitly import a flight plan." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,6,0,0"/><TextBlock Text="AIRLY" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,22,0,0"/><TextBlock Text="Airly ID" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SettingsAirlyIdBox" Height="36"/><TextBlock Text="Username" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SettingsUsernameBox" Height="36"/><TextBlock Text="CLIENT" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,22,0,0"/><CheckBox x:Name="StartWithWindowsBox" Content="Start Airly Client with Windows"/><CheckBox x:Name="AutoConnectBox" Content="Automatically connect to Airly"/><CheckBox x:Name="EnableAtcAudioBox" Content="Enable ATC audio" IsChecked="True"/><CheckBox x:Name="EnableMultiplayerBox" Content="Enable multiplayer traffic" IsChecked="True"/><CheckBox x:Name="AutomaticModelMatchingBox" Content="Use automatic model matching" IsChecked="True"/><TextBlock Text="APPEARANCE" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" Margin="0,24,0,0"/>
 <TextBlock Text="Theme" Style="{StaticResource FieldLabel}"/>
 <ComboBox x:Name="ThemeModeBox" Height="36" SelectionChanged="ThemeModeBox_SelectionChanged">

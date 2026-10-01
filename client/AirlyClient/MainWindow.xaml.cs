@@ -42,6 +42,9 @@ public partial class MainWindow : Window
     private bool _metricsRequestRunning;
     private int _renderFrames;
     private long _lastFpsTick;
+    private readonly ObservableCollection<AiChatSession> _aiChats = new();
+    private AiChatSession? _activeAiChat;
+    private readonly string _aiChatFilePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Airly", "ai-chats.json");
 
     public MainWindow()
     {
@@ -65,60 +68,47 @@ public partial class MainWindow : Window
         Closed += (_, _) => CompositionTarget.Rendering -= CompositionTarget_Rendering;
         Closed += (_, _) => _trackingTimer.Stop();
         VersionLabel.Text = "Airly Client " + ClientConfig.Version;
-        AddAiMessage("Airly AI", "Ask me about flight planning, ATC, aircraft systems, meteorology, navigation, procedures or aviation calculations. If it is unrelated to aviation, I’ll keep us on topic.");
+        InitializeAiChats();
         Loaded += async (_, _) => await CheckForUpdatesAsync();
     }
 
     private void AddAiMessage(string sender, string message)
     {
-        var row = new Grid { Margin = new Thickness(0, 0, 0, 18) };
-        var bubble = new Border
+        EnsureActiveAiChat();
+        _activeAiChat!.Messages.Add(new AiChatMessage { Sender = sender, Text = message });
+        if (sender == "You" && _activeAiChat.Title == "New chat")
         {
-            Background = sender == "You" ? new SolidColorBrush(Color.FromRgb(38, 49, 61)) : Brushes.Transparent,
-            BorderBrush = sender == "You" ? new SolidColorBrush(Color.FromRgb(54, 68, 82)) : Brushes.Transparent,
-            BorderThickness = sender == "You" ? new Thickness(1) : new Thickness(0),
-            CornerRadius = new CornerRadius(16),
-            Padding = sender == "You" ? new Thickness(15, 11, 15, 11) : new Thickness(0),
-            MaxWidth = 850,
-            HorizontalAlignment = sender == "You" ? HorizontalAlignment.Right : HorizontalAlignment.Left
-        };
-        var stack = new StackPanel();
-        stack.Children.Add(new TextBlock
-        {
-            Text = sender == "You" ? "You" : "Airly AI",
-            FontSize = 10,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = sender == "You" ? new SolidColorBrush(Color.FromRgb(192, 207, 222)) : (Brush)FindResource("AccentBrush"),
-            Margin = new Thickness(0, 0, 0, 6)
-        });
-        if (sender == "You")
-            stack.Children.Add(new TextBlock { Text = message, FontSize = 13, Foreground = (Brush)FindResource("TextBrush"), TextWrapping = TextWrapping.Wrap });
-        else
-            stack.Children.Add(RenderAiMarkdown(message));
-        bubble.Child = stack;
-        row.Children.Add(bubble);
-        AiMessages.Children.Add(row);
-        AiScroll.ScrollToEnd();
+            var title = message.Trim();
+            _activeAiChat.Title = title.Length > 42 ? title[..42].TrimEnd() + "…" : (string.IsNullOrWhiteSpace(title) ? "New chat" : title);
+            AiChatList.Items.Refresh();
+        }
+        SaveAiChats();
+        RenderActiveAiChat();
     }
+
+
 
     private StackPanel RenderAiMarkdown(string markdown)
     {
         var panel = new StackPanel();
         var inCode = false;
         var code = new List<string>();
-        foreach (var raw in markdown.Replace("\r\n", "\n").Split('\n'))
+        foreach (var raw in markdown.Replace("
+", "
+").Split('
+'))
         {
             var line = raw.TrimEnd();
-            if (line.Trim().StartsWith(new string('\x60', 3), StringComparison.Ordinal))
+            if (line.Trim().StartsWith(new string('`', 3), StringComparison.Ordinal))
             {
                 if (inCode)
                 {
                     panel.Children.Add(new Border
                     {
                         Background = new SolidColorBrush(Color.FromRgb(17, 20, 24)),
-                        CornerRadius = new CornerRadius(8),
-                        Padding = new Thickness(12),
-                        Margin = new Thickness(0, 5, 0, 10),
+                        CornerRadius = new CornerRadius(10),
+                        Padding = new Thickness(13),
+                        Margin = new Thickness(0, 5, 0, 12),
                         Child = new TextBlock
                         {
                             Text = string.Join(Environment.NewLine, code),
@@ -137,36 +127,56 @@ public partial class MainWindow : Window
             if (inCode) { code.Add(line); continue; }
             if (string.IsNullOrWhiteSpace(line))
             {
-                panel.Children.Add(new Border { Height = 5, Background = Brushes.Transparent });
+                panel.Children.Add(new Border { Height = 7, Background = Brushes.Transparent });
                 continue;
             }
-
             var text = line.TrimStart();
             var heading = 0;
             while (heading < text.Length && heading < 3 && text[heading] == '#') heading++;
             if (heading > 0 && heading < text.Length && text[heading] == ' ')
             {
-                panel.Children.Add(CreateMarkdownText(text[(heading + 1)..], 18 - heading, FontWeights.SemiBold, new Thickness(0, 8, 0, 4)));
+                var size = heading == 1 ? 25 : heading == 2 ? 21 : 18;
+                panel.Children.Add(CreateMarkdownText(text[(heading + 1)..], size, FontWeights.SemiBold, new Thickness(0, 12, 0, 7)));
                 continue;
             }
-            if (text.StartsWith("> "))
+            if (text.StartsWith("> ", StringComparison.Ordinal))
             {
-                panel.Children.Add(CreateMarkdownText(text[2..], 13, FontWeights.Normal, new Thickness(12, 2, 0, 8)));
+                panel.Children.Add(CreateMarkdownText(text[2..], 13, FontWeights.Normal, new Thickness(14, 2, 0, 8)));
                 continue;
             }
-            var bullet = text.StartsWith("- ") || text.StartsWith("* ");
+            var bullet = text.StartsWith("- ", StringComparison.Ordinal) || text.StartsWith("* ", StringComparison.Ordinal);
             var numbered = Regex.IsMatch(text, @"^\d+\.\s+");
             if (bullet || numbered)
             {
                 var content = bullet ? text[2..] : Regex.Replace(text, @"^\d+\.\s+", string.Empty);
                 var prefix = bullet ? "• " : Regex.Match(text, @"^\d+\.").Value + " ";
-                panel.Children.Add(CreateMarkdownText(prefix + content, 13, FontWeights.Normal, new Thickness(4, 2, 0, 5)));
+                panel.Children.Add(CreateMarkdownText(prefix + content, 13.5, FontWeights.Normal, new Thickness(5, 2, 0, 5)));
                 continue;
             }
-            panel.Children.Add(CreateMarkdownText(line, 13, FontWeights.Normal, new Thickness(0, 0, 0, 7)));
+            panel.Children.Add(CreateMarkdownText(line, 13.5, FontWeights.Normal, new Thickness(0, 0, 0, 8)));
+        }
+        if (inCode && code.Count > 0)
+        {
+            panel.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(17, 20, 24)),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(13),
+                Margin = new Thickness(0, 5, 0, 12),
+                Child = new TextBlock
+                {
+                    Text = string.Join(Environment.NewLine, code),
+                    FontFamily = new System.Windows.Media.FontFamily("Consolas"),
+                    FontSize = 12,
+                    Foreground = (Brush)FindResource("TextBrush"),
+                    TextWrapping = TextWrapping.Wrap
+                }
+            });
         }
         return panel;
     }
+
+
 
     private TextBlock CreateMarkdownText(string text, double size, FontWeight weight, Thickness margin)
     {
@@ -178,7 +188,7 @@ public partial class MainWindow : Window
             TextWrapping = TextWrapping.Wrap,
             Margin = margin
         };
-        var pattern = new Regex(@"(\*\*.+?\*\*|\x60.+?\x60|\*.+?\*)");
+        var pattern = new Regex(@"(\*\*.+?\*\*|`.+?`|\*.+?\*)");
         var index = 0;
         foreach (Match match in pattern.Matches(text))
         {
@@ -186,7 +196,7 @@ public partial class MainWindow : Window
             var value = match.Value;
             if (value.StartsWith("**", StringComparison.Ordinal) && value.EndsWith("**", StringComparison.Ordinal))
                 block.Inlines.Add(new Bold(new Run(value[2..^2])));
-            else if (value.StartsWith(new string('\x60', 1), StringComparison.Ordinal) && value.EndsWith(new string('\x60', 1), StringComparison.Ordinal))
+            else if (value.StartsWith(new string('`', 1), StringComparison.Ordinal) && value.EndsWith(new string('`', 1), StringComparison.Ordinal))
                 block.Inlines.Add(new Run(value[1..^1]) { FontFamily = new System.Windows.Media.FontFamily("Consolas") });
             else if (value.StartsWith("*", StringComparison.Ordinal) && value.EndsWith("*", StringComparison.Ordinal))
                 block.Inlines.Add(new Italic(new Run(value[1..^1])));
@@ -195,6 +205,8 @@ public partial class MainWindow : Window
         if (index < text.Length) block.Inlines.Add(new Run(text[index..]));
         return block;
     }
+
+
 
     private async void AiAsk_Click(object sender, RoutedEventArgs e)
     {
@@ -211,8 +223,18 @@ public partial class MainWindow : Window
             AddAiMessage("Airly Helper", result?.reply ?? "The aviation helper service did not return a response.");
             AiStatusText.Text = response.IsSuccessStatusCode ? "Ready" : "Service unavailable";
         }
-        catch (Exception ex) { AddAiMessage("Airly Helper", $"I could not reach the helper service: {ex.Message}"); AiStatusText.Text = "Offline"; }
+        catch (Exception ex)
+        {
+            AddAiMessage("Airly Helper", $"I could not reach the helper service: {ex.Message}");
+            AiStatusText.Text = "Offline";
+        }
+        finally
+        {
+            AiInput.Focus();
+        }
     }
+
+
 
     private void AiEmoji_Click(object sender, RoutedEventArgs e)
     {
@@ -236,9 +258,11 @@ public partial class MainWindow : Window
     private void AiPower_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!IsInitialized || AiPowerBox.SelectedItem is not ComboBoxItem item) return;
-        var value = item.Content?.ToString() ?? "Medium Power";
-        _aiPower = value.StartsWith("Minimal", StringComparison.OrdinalIgnoreCase) ? "Minimal" : value.StartsWith("Extra", StringComparison.OrdinalIgnoreCase) ? "Extra" : "Medium";
+        var value = item.Content?.ToString() ?? "Medium";
+        _aiPower = value.StartsWith("Fast", StringComparison.OrdinalIgnoreCase) ? "Minimal" : value.StartsWith("Extra", StringComparison.OrdinalIgnoreCase) ? "Extra" : "Medium";
     }
+
+
 
     private void AiInput_KeyDown(object sender, KeyEventArgs e)
     {
@@ -252,10 +276,135 @@ public partial class MainWindow : Window
     private void Window_PreviewTextInput(object sender, TextCompositionEventArgs e)
     {
         if (AiHelperView.Visibility != Visibility.Visible || AiInput.IsKeyboardFocusWithin) return;
+        if (Keyboard.FocusedElement is TextBox || Keyboard.FocusedElement is ComboBoxItem || Keyboard.FocusedElement is Button) return;
         AiInput.Focus();
         AiInput.CaretIndex = AiInput.Text.Length;
         AiInput.AppendText(e.Text);
         e.Handled = true;
+    }
+
+    private void InitializeAiChats()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_aiChatFilePath)!);
+            if (File.Exists(_aiChatFilePath))
+            {
+                var json = File.ReadAllText(_aiChatFilePath);
+                var loaded = JsonSerializer.Deserialize<List<AiChatSession>>(json);
+                if (loaded != null)
+                    foreach (var chat in loaded)
+                        _aiChats.Add(chat);
+            }
+        }
+        catch { }
+
+        if (_aiChats.Count == 0)
+            _aiChats.Add(new AiChatSession { Title = "New chat" });
+
+        _activeAiChat = _aiChats[_aiChats.Count - 1];
+        AiChatList.ItemsSource = _aiChats;
+        AiChatList.SelectedItem = _activeAiChat;
+        RenderActiveAiChat();
+
+        if (_activeAiChat.Messages.Count == 0)
+            AddAiMessage("Airly AI", "Ask me about flight planning, ATC, aircraft systems, meteorology, navigation, procedures or aviation calculations. If it is unrelated to aviation, I’ll keep us on topic.");
+    }
+
+    private void EnsureActiveAiChat()
+    {
+        if (_activeAiChat != null) return;
+        if (_aiChats.Count == 0)
+            _aiChats.Add(new AiChatSession { Title = "New chat" });
+        _activeAiChat = _aiChats[_aiChats.Count - 1];
+    }
+
+    private void SaveAiChats()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(_aiChatFilePath)!);
+            File.WriteAllText(_aiChatFilePath, JsonSerializer.Serialize(_aiChats, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch { }
+    }
+
+    private void RenderActiveAiChat()
+    {
+        if (AiMessages == null) return;
+        EnsureActiveAiChat();
+        AiMessages.Children.Clear();
+        foreach (var message in _activeAiChat!.Messages)
+        {
+            var row = new Grid { Margin = new Thickness(0, 0, 0, 22) };
+            var bubble = new Border
+            {
+                Background = message.Sender == "You" ? (Brush)FindResource("InputBrush") : Brushes.Transparent,
+                BorderBrush = message.Sender == "You" ? (Brush)FindResource("LineBrush") : Brushes.Transparent,
+                BorderThickness = message.Sender == "You" ? new Thickness(1) : new Thickness(0),
+                CornerRadius = new CornerRadius(16),
+                Padding = message.Sender == "You" ? new Thickness(15, 11, 15, 11) : new Thickness(0),
+                MaxWidth = 820,
+                HorizontalAlignment = message.Sender == "You" ? HorizontalAlignment.Right : HorizontalAlignment.Left
+            };
+            var stack = new StackPanel();
+            stack.Children.Add(new TextBlock
+            {
+                Text = message.Sender == "You" ? "You" : "Airly AI",
+                FontSize = 10,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = message.Sender == "You" ? (Brush)FindResource("MutedBrush") : (Brush)FindResource("AccentBrush"),
+                Margin = new Thickness(0, 0, 0, 6)
+            });
+            if (message.Sender == "You")
+                stack.Children.Add(new TextBlock { Text = message.Text, FontSize = 13.5, Foreground = (Brush)FindResource("TextBrush"), TextWrapping = TextWrapping.Wrap });
+            else
+                stack.Children.Add(RenderAiMarkdown(message.Text));
+            bubble.Child = stack;
+            row.Children.Add(bubble);
+            AiMessages.Children.Add(row);
+        }
+        AiScroll.ScrollToEnd();
+    }
+
+    private void AiHistoryToggle_Click(object sender, RoutedEventArgs e)
+    {
+        var collapsed = AiHistoryColumn.Width.Value > 0;
+        AiHistoryColumn.Width = collapsed ? new GridLength(0) : new GridLength(250);
+        AiHistoryToggle.Content = collapsed ? "›" : "‹";
+        AiHistoryToggle.ToolTip = collapsed ? "Show chat history" : "Hide chat history";
+    }
+
+    private void AiNewChat_Click(object sender, RoutedEventArgs e)
+    {
+        var chat = new AiChatSession { Title = "New chat" };
+        _aiChats.Add(chat);
+        _activeAiChat = chat;
+        AiChatList.SelectedItem = chat;
+        SaveAiChats();
+        RenderActiveAiChat();
+        AiInput.Focus();
+    }
+
+    private void AiChatList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (AiChatList.SelectedItem is AiChatSession chat)
+        {
+            _activeAiChat = chat;
+            RenderActiveAiChat();
+        }
+    }
+
+    private sealed class AiChatSession
+    {
+        public string Title { get; set; } = "New chat";
+        public List<AiChatMessage> Messages { get; set; } = new();
+    }
+
+    private sealed class AiChatMessage
+    {
+        public string Sender { get; set; } = "Airly AI";
+        public string Text { get; set; } = string.Empty;
     }
 
     private void LoadSettingsIntoUi()
