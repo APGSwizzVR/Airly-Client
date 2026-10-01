@@ -251,7 +251,7 @@ public partial class MainWindow : Window
     private static string CleanChatTitle(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
-        var title = value.Replace("\r", " ").Replace("\n", " ").Trim().Trim('"', '\\'', '*', '#', ':', '-');
+        var title = value.Replace("\r", " ").Replace("\n", " ").Trim().Trim('"', '\'', '*', '#', ':', '-');
         title = Regex.Replace(title, @"\s+", " ");
         return title.Length > 42 ? title[..42].TrimEnd() : title;
     }
