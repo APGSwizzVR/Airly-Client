@@ -38,6 +38,10 @@ public partial class MainWindow : Window
     private bool _trackingRequestRunning;
     private UpdateInfo? _availableUpdate;
     private bool _updatePromptShown;
+    private bool _updateIsMandatory;
+    private string _pendingThemeMode = "Dark";
+    private string _pendingAccentColor = "#80858B";
+    private bool _aiTitleRequestRunning;
     private string? _communityFolder;
     private bool _metricsRequestRunning;
     private int _renderFrames;
@@ -56,6 +60,8 @@ public partial class MainWindow : Window
         TrackingGrid.ItemsSource = _trackedFlights;
         LoadSettingsIntoUi();
         InitializeTheme();
+        InitializeEmojiPicker();
+        RenderColorWheel();
         LoadDemoUiState();
         InitializeClientMetrics();
         _ = InitializeTrackingMapAsync();
@@ -76,12 +82,6 @@ public partial class MainWindow : Window
     {
         EnsureActiveAiChat();
         _activeAiChat!.Messages.Add(new AiChatMessage { Sender = sender, Text = message });
-        if (sender == "You" && _activeAiChat.Title == "New chat")
-        {
-            var title = message.Trim();
-            _activeAiChat.Title = title.Length > 42 ? title[..42].TrimEnd() + "…" : (string.IsNullOrWhiteSpace(title) ? "New chat" : title);
-            AiChatList.Items.Refresh();
-        }
         SaveAiChats();
         RenderActiveAiChat();
     }
@@ -210,8 +210,7 @@ public partial class MainWindow : Window
         var question = AiInput.Text.Trim();
         if (string.IsNullOrWhiteSpace(question)) return;
         AddAiMessage("You", question);
-        AiInput.Clear();
-        AiStatusText.Text = "Thinking…";
+        AiInput.Clear(); AiStatusText.Text = "Thinking…";
         try
         {
             var payload = new { message = question, power = _aiPower, attachments = string.IsNullOrWhiteSpace(AiAttachment.Text) || AiAttachment.Text == "No attachment" ? Array.Empty<object>() : new[] { new { name = AiAttachment.Text, content = "Attachment selected in Airly Client" } } };
@@ -219,23 +218,50 @@ public partial class MainWindow : Window
             var result = await response.Content.ReadFromJsonAsync<AiHelperResponse>();
             AddAiMessage("Airly Helper", result?.reply ?? "The aviation helper service did not return a response.");
             AiStatusText.Text = response.IsSuccessStatusCode ? "Ready" : "Service unavailable";
+            await RenameActiveChatAsync(question);
         }
         catch (Exception ex)
         {
             AddAiMessage("Airly Helper", $"I could not reach the helper service: {ex.Message}");
             AiStatusText.Text = "Offline";
+            await RenameActiveChatAsync(question);
         }
+        finally { AiInput.Focus(); }
+    }
+
+    private async Task RenameActiveChatAsync(string question)
+    {
+        if (_aiTitleRequestRunning || _activeAiChat is null || _activeAiChat.Messages.Count == 0) return;
+        _aiTitleRequestRunning = true;
+        try
+        {
+            var titlePayload = new { message = "Create a concise 3-6 word title for this aviation chat. Return ONLY the title, no punctuation, quotes, markdown or explanation. User question: " + question, power = "Minimal", attachments = Array.Empty<object>() };
+            using var response = await _http.PostAsJsonAsync($"{ClientConfig.ApiBaseUrl}api/ai/helper", titlePayload);
+            var result = await response.Content.ReadFromJsonAsync<AiHelperResponse>();
+            var title = CleanChatTitle(result?.reply);
+            _activeAiChat.Title = string.IsNullOrWhiteSpace(title) ? CreateFallbackChatTitle(question) : title;
+        }
+        catch { _activeAiChat.Title = CreateFallbackChatTitle(question); }
         finally
         {
-            AiInput.Focus();
+            AiChatList.Items.Refresh(); SaveAiChats(); _aiTitleRequestRunning = false;
         }
     }
 
-
-
-    private void AiEmoji_Click(object sender, RoutedEventArgs e)
+    private static string CleanChatTitle(string? value)
     {
-        if ((sender as Button)?.Tag is string emoji) { AiInput.SelectedText = emoji; AiInput.CaretIndex += emoji.Length; AiInput.Focus(); }
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        var title = value.Replace("\r", " ").Replace("\n", " ").Trim().Trim('"', '\\'', '*', '#', ':', '-');
+        title = Regex.Replace(title, @"\s+", " ");
+        return title.Length > 42 ? title[..42].TrimEnd() : title;
+    }
+
+    private static string CreateFallbackChatTitle(string question)
+    {
+        var cleaned = Regex.Replace(question.Trim(), @"\s+", " ");
+        if (cleaned.Length <= 38) return cleaned;
+        var cut = cleaned[..38]; var lastSpace = cut.LastIndexOf(' ');
+        return (lastSpace > 12 ? cut[..lastSpace] : cut).TrimEnd() + "…";
     }
 
     private void AiFile_Click(object sender, RoutedEventArgs e)
@@ -261,12 +287,12 @@ public partial class MainWindow : Window
 
 
 
-    private void AiInput_KeyDown(object sender, KeyEventArgs e)
+    private void AiInput_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.None)
         {
-            AiAsk_Click(sender, new RoutedEventArgs());
             e.Handled = true;
+            AiAsk_Click(sender, new RoutedEventArgs());
         }
     }
 
@@ -280,6 +306,108 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
+    private void InitializeEmojiPicker()
+    {
+        var emojis = new[]
+        {
+            "😀","😃","😄","😁","😆","😅","😂","🤣","😊","😇","🙂","🙃","😉","😌","😍","🥰","😘","😎","🤓","🫡",
+            "🤔","🤨","😐","😑","😶","🙄","😏","😴","🤯","😮","😲","😳","🥳","🤩","😬","😢","😭","😡",
+            "👍","👎","👏","🙌","👌","✌️","🤝","🙏","💪","👀","🫶","❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎",
+            "🔥","⭐","✨","💯","⚡","✈️","🛫","🛬","🛩️","🚁","🎧","🎙️","📡","🗺️","🧭","⛅","☀️","🌧️","❄️",
+            "🇮🇪","🇬🇧","🇺🇸","🇵🇹","🇪🇸","🇫🇷","🇩🇪","🇧🇷","🇨🇦","🇦🇺","🇯🇵","🇳🇱","🇨🇭","🇳🇴","🇮🇸","🇦🇪"
+        };
+        foreach (var emoji in emojis)
+        {
+            var button = new Button
+            {
+                Content = emoji, Width = 42, Height = 38, FontSize = 19, Margin = new Thickness(2),
+                Style = (Style)FindResource("SecondaryButton"), BorderThickness = new Thickness(0), Tag = emoji
+            };
+            button.Click += AiEmojiInsert_Click;
+            AiEmojiWrap.Children.Add(button);
+        }
+    }
+
+    private void AiEmoji_Click(object sender, RoutedEventArgs e)
+    {
+        var open = AiEmojiPanel.Visibility == Visibility.Visible;
+        if (open)
+        {
+            AiEmojiTransform.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, 28, TimeSpan.FromMilliseconds(130)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } });
+            AiEmojiPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+        AiEmojiPanel.Visibility = Visibility.Visible;
+        AiEmojiTransform.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(28, 0, TimeSpan.FromMilliseconds(170)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+    }
+
+    private void AiEmojiInsert_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as Button)?.Tag is string emoji)
+        {
+            AiInput.SelectedText = emoji;
+            AiInput.CaretIndex += emoji.Length;
+            AiInput.Focus();
+            AiEmojiPanel.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void RenderColorWheel()
+    {
+        const int size = 180;
+        var pixels = new byte[size * size * 4];
+        var center = size / 2.0;
+        var radius = size / 2.0 - 1;
+        for (var y = 0; y < size; y++)
+        for (var xx = 0; xx < size; xx++)
+        {
+            var dx = (xx - center) / radius;
+            var dy = (y - center) / radius;
+            var distance = Math.Sqrt(dx * dx + dy * dy);
+            var index = (y * size + xx) * 4;
+            if (distance > 1) { pixels[index + 3] = 0; continue; }
+            var hue = (Math.Atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+            var color = HsvToColor(hue, Math.Min(1, distance), 1);
+            pixels[index] = color.B; pixels[index + 1] = color.G; pixels[index + 2] = color.R; pixels[index + 3] = 255;
+        }
+        var bitmap = new WriteableBitmap(size, size, 96, 96, System.Windows.Media.PixelFormats.Bgra32, null);
+        bitmap.WritePixels(new Int32Rect(0, 0, size, size), pixels, size * 4, 0);
+        CustomColorWheel.Source = bitmap;
+    }
+
+    private void CustomColorWheel_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        var p = e.GetPosition(CustomColorWheel);
+        var center = new Point(CustomColorWheel.ActualWidth / 2, CustomColorWheel.ActualHeight / 2);
+        var dx = p.X - center.X; var dy = p.Y - center.Y;
+        var radius = Math.Max(1, Math.Min(center.X, center.Y));
+        var distance = Math.Min(1, Math.Sqrt(dx * dx + dy * dy) / radius);
+        var hue = (Math.Atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+        var color = HsvToColor(hue, distance, 1);
+        _pendingAccentColor = color.ToString();
+        CustomColorHexBox.Text = _pendingAccentColor;
+        CustomColorPreview.Background = new SolidColorBrush(color);
+    }
+
+    private void CustomColorApply_Click(object sender, RoutedEventArgs e)
+    {
+        var value = CustomColorHexBox.Text.Trim();
+        if (Regex.IsMatch(value, "^#[0-9A-Fa-f]{6}$"))
+        {
+            _pendingAccentColor = value;
+            CustomColorPreview.Background = new SolidColorBrush(ParseColor(value, Colors.Gray));
+        }
+    }
+
+    private static Color HsvToColor(double h, double s, double v)
+    {
+        var c = v * s; var x = c * (1 - Math.Abs((h / 60 % 2) - 1)); var m = v - c;
+        double r=0,g=0,b=0;
+        if (h < 60) { r=c; g=x; } else if (h < 120) { r=x; g=c; } else if (h < 180) { g=c; b=x; }
+        else if (h < 240) { g=x; b=c; } else if (h < 300) { r=x; b=c; } else { r=c; b=x; }
+        return Color.FromRgb((byte)Math.Round((r+m)*255), (byte)Math.Round((g+m)*255), (byte)Math.Round((b+m)*255));
+    }
+
     private void InitializeAiChats()
     {
         try
@@ -290,22 +418,21 @@ public partial class MainWindow : Window
                 var json = File.ReadAllText(_aiChatFilePath);
                 var loaded = JsonSerializer.Deserialize<List<AiChatSession>>(json);
                 if (loaded != null)
-                    foreach (var chat in loaded)
+                    foreach (var chat in loaded.Where(chat => chat.Messages.Count > 0))
                         _aiChats.Add(chat);
             }
         }
         catch { }
 
-        if (_aiChats.Count == 0)
-            _aiChats.Add(new AiChatSession { Title = "New chat" });
-
-        _activeAiChat = _aiChats[_aiChats.Count - 1];
+        _activeAiChat = _aiChats.LastOrDefault();
+        if (_activeAiChat == null)
+        {
+            _activeAiChat = new AiChatSession { Title = "New chat" };
+            _aiChats.Add(_activeAiChat);
+        }
         AiChatList.ItemsSource = _aiChats;
         AiChatList.SelectedItem = _activeAiChat;
         RenderActiveAiChat();
-
-        if (_activeAiChat.Messages.Count == 0)
-            AddAiMessage("Airly AI", "Ask me about flight planning, ATC, aircraft systems, meteorology, navigation, procedures or aviation calculations. If it is unrelated to aviation, I’ll keep us on topic.");
     }
 
     private void EnsureActiveAiChat()
@@ -321,7 +448,8 @@ public partial class MainWindow : Window
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(_aiChatFilePath)!);
-            File.WriteAllText(_aiChatFilePath, JsonSerializer.Serialize(_aiChats, new JsonSerializerOptions { WriteIndented = true }));
+            var saved = _aiChats.Where(chat => chat.Messages.Count > 0).ToList();
+            File.WriteAllText(_aiChatFilePath, JsonSerializer.Serialize(saved, new JsonSerializerOptions { WriteIndented = true }));
         }
         catch { }
     }
@@ -341,15 +469,14 @@ public partial class MainWindow : Window
                 BorderThickness = message.Sender == "You" ? new Thickness(1) : new Thickness(0),
                 CornerRadius = new CornerRadius(16),
                 Padding = message.Sender == "You" ? new Thickness(15, 11, 15, 11) : new Thickness(0),
-                MaxWidth = 820,
+                MaxWidth = 900,
                 HorizontalAlignment = message.Sender == "You" ? HorizontalAlignment.Right : HorizontalAlignment.Left
             };
             var stack = new StackPanel();
             stack.Children.Add(new TextBlock
             {
                 Text = message.Sender == "You" ? "You" : "Airly AI",
-                FontSize = 10,
-                FontWeight = FontWeights.SemiBold,
+                FontSize = 10, FontWeight = FontWeights.SemiBold,
                 Foreground = message.Sender == "You" ? (Brush)FindResource("MutedBrush") : (Brush)FindResource("AccentBrush"),
                 Margin = new Thickness(0, 0, 0, 6)
             });
@@ -357,9 +484,7 @@ public partial class MainWindow : Window
                 stack.Children.Add(new TextBlock { Text = message.Text, FontSize = 13.5, Foreground = (Brush)FindResource("TextBrush"), TextWrapping = TextWrapping.Wrap });
             else
                 stack.Children.Add(RenderAiMarkdown(message.Text));
-            bubble.Child = stack;
-            row.Children.Add(bubble);
-            AiMessages.Children.Add(row);
+            bubble.Child = stack; row.Children.Add(bubble); AiMessages.Children.Add(row);
         }
         AiScroll.ScrollToEnd();
     }
@@ -374,165 +499,119 @@ public partial class MainWindow : Window
 
     private void AiNewChat_Click(object sender, RoutedEventArgs e)
     {
+        if (_activeAiChat is not null && _activeAiChat.Messages.Count == 0)
+            _aiChats.Remove(_activeAiChat);
         var chat = new AiChatSession { Title = "New chat" };
-        _aiChats.Add(chat);
-        _activeAiChat = chat;
-        AiChatList.SelectedItem = chat;
-        SaveAiChats();
-        RenderActiveAiChat();
-        AiInput.Focus();
+        _aiChats.Add(chat); _activeAiChat = chat;
+        AiChatList.ItemsSource = null; AiChatList.ItemsSource = _aiChats;
+        AiChatList.SelectedItem = chat; RenderActiveAiChat(); AiInput.Focus();
     }
 
     private void AiChatList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (AiChatList.SelectedItem is AiChatSession chat)
-        {
-            _activeAiChat = chat;
-            RenderActiveAiChat();
-        }
+        if (AiChatList.SelectedItem is AiChatSession chat) { _activeAiChat = chat; RenderActiveAiChat(); }
     }
 
-    private sealed class AiChatSession
-    {
-        public string Title { get; set; } = "New chat";
-        public List<AiChatMessage> Messages { get; set; } = new();
-    }
-
-    private sealed class AiChatMessage
-    {
-        public string Sender { get; set; } = "Airly AI";
-        public string Text { get; set; } = string.Empty;
-    }
+    private sealed class AiChatSession { public string Title { get; set; } = "New chat"; public List<AiChatMessage> Messages { get; set; } = new(); }
+    private sealed class AiChatMessage { public string Sender { get; set; } = "Airly AI"; public string Text { get; set; } = string.Empty; }
 
     private void LoadSettingsIntoUi()
     {
-        SimBriefPilotIdBox.Text = _settings.SimBriefPilotId;
-        AirlyIdBox.Text = _settings.AirlyId;
-        UsernameBox.Text = _settings.Username;
-        SettingsAirlyIdBox.Text = _settings.AirlyId;
-        SettingsUsernameBox.Text = _settings.Username;
-        StartWithWindowsBox.IsChecked = _settings.StartWithWindows;
-        AutoConnectBox.IsChecked = _settings.AutoConnect;
-        EnableAtcAudioBox.IsChecked = _settings.EnableAtcAudio;
-        EnableMultiplayerBox.IsChecked = _settings.EnableMultiplayer;
-        AutomaticModelMatchingBox.IsChecked = _settings.AutomaticModelMatching;
-        _settings.ThemeMode = string.Equals(_settings.ThemeMode, "Bright", StringComparison.OrdinalIgnoreCase) ? "Bright" : "Dark";
+        SimBriefPilotIdBox.Text = _settings.SimBriefPilotId; AirlyIdBox.Text = _settings.AirlyId; UsernameBox.Text = _settings.Username;
+        SettingsAirlyIdBox.Text = _settings.AirlyId; SettingsUsernameBox.Text = _settings.Username;
+        StartWithWindowsBox.IsChecked = _settings.StartWithWindows; AutoConnectBox.IsChecked = _settings.AutoConnect;
+        EnableAtcAudioBox.IsChecked = _settings.EnableAtcAudio; EnableMultiplayerBox.IsChecked = _settings.EnableMultiplayer; AutomaticModelMatchingBox.IsChecked = _settings.AutomaticModelMatching;
+        ReduceAnimationsBox.IsChecked = _settings.ReduceAnimations; LimitFpsBox.IsChecked = _settings.LimitFps; LowBandwidthBox.IsChecked = _settings.LowBandwidth;
+        HardwareAccelerationBox.IsChecked = _settings.HardwareAcceleration; CacheMapTilesBox.IsChecked = _settings.CacheMapTiles; CompactTrafficBox.IsChecked = _settings.CompactTraffic;
+        EnableSoundEffectsBox.IsChecked = _settings.EnableSoundEffects; PushToTalkBox.IsChecked = _settings.PushToTalk; VoiceVolumeSlider.Value = _settings.VoiceVolume;
+        UiScaleBox.SelectedItem = UiScaleBox.Items.OfType<ComboBoxItem>().FirstOrDefault(i => i.Content?.ToString() == _settings.UiScalePercent + "%") ?? UiScaleBox.Items[0];
+        NetworkUpdateRateBox.SelectedItem = NetworkUpdateRateBox.Items.OfType<ComboBoxItem>().FirstOrDefault(i => i.Content?.ToString() == _settings.NetworkUpdateRate) ?? NetworkUpdateRateBox.Items[0];
+        AutomaticUpdatesBox.IsChecked = _settings.AutomaticUpdates; ReleaseNotesBox.IsChecked = _settings.ShowReleaseNotes;
+        _pendingThemeMode = string.Equals(_settings.ThemeMode, "Bright", StringComparison.OrdinalIgnoreCase) ? "Bright" : "Dark";
+        _pendingAccentColor = Regex.IsMatch(_settings.AccentColor ?? "", "^#[0-9A-Fa-f]{6}$") ? _settings.AccentColor : GetDefaultAccent(_pendingThemeMode);
+        PopulatePaletteButtons(); UpdateThemeSelectionVisuals(); CustomColorHexBox.Text = _pendingAccentColor;
+        CustomColorPreview.Background = new SolidColorBrush(ParseColor(_pendingAccentColor, Colors.Gray));
     }
 
-    private static readonly (string Name, string Hex)[] DarkPalette =
+    private static readonly (string Name, string Hex)[] Palette =
     {
-        ("Default", "#80858B"), ("Ocean", "#1689B8"), ("Aurora", "#27B8A4"), ("Violet", "#8B5CF6"),
-        ("Rose", "#E05272"), ("Amber", "#D99119"), ("Emerald", "#22A06B"), ("Glacier", "#53B6D6"),
-        ("Coral", "#E56A4A"), ("Silver", "#AEB7C2")
-    };
-
-    private static readonly (string Name, string Hex)[] BrightPalette =
-    {
-        ("Default", "#7A7F84"), ("Ocean", "#087EA4"), ("Teal", "#087F8C"), ("Violet", "#7044C8"),
-        ("Rose", "#C83F75"), ("Amber", "#A96800"), ("Emerald", "#168653"), ("Sky", "#176D9C"),
-        ("Coral", "#B84427"), ("Slate", "#4B5563")
+        ("Slate","#80858B"),("Ocean","#1689B8"),("Aurora","#27B8A4"),("Violet","#8B5CF6"),("Rose","#E05272"),
+        ("Amber","#D99119"),("Emerald","#22A06B"),("Glacier","#53B6D6"),("Coral","#E56A4A"),("Sky","#3487D7"),
+        ("Indigo","#5865D9"),("Mint","#45B78B"),("Gold","#C69B32"),("Ruby","#D63D58"),("Plum","#9B59B6")
     };
 
     private void InitializeTheme()
     {
-        ThemeModeBox.SelectedItem = ThemeModeBox.Items
-            .OfType<ComboBoxItem>()
-            .FirstOrDefault(item => string.Equals(item.Content?.ToString(), _settings.ThemeMode, StringComparison.OrdinalIgnoreCase))
-            ?? ThemeModeBox.Items[0];
-
-        PopulateAccentPalette(_settings.ThemeMode, _settings.AccentColor);
-        ApplyTheme();
+        _pendingThemeMode = string.Equals(_settings.ThemeMode, "Bright", StringComparison.OrdinalIgnoreCase) ? "Bright" : "Dark";
+        _pendingAccentColor = Regex.IsMatch(_settings.AccentColor ?? "", "^#[0-9A-Fa-f]{6}$") ? _settings.AccentColor : GetDefaultAccent(_pendingThemeMode);
+        ApplyTheme(); PopulatePaletteButtons(); UpdateThemeSelectionVisuals();
     }
 
-    private void ThemeModeBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void ThemeDark_Click(object sender, RoutedEventArgs e) { _pendingThemeMode = "Dark"; UpdateThemeSelectionVisuals(); }
+    private void ThemeBright_Click(object sender, RoutedEventArgs e) { _pendingThemeMode = "Bright"; UpdateThemeSelectionVisuals(); }
+
+    private void PaletteButton_Click(object sender, RoutedEventArgs e)
     {
-        if (!IsInitialized || ThemeModeBox.SelectedItem is not ComboBoxItem item) return;
-        var mode = item.Content?.ToString() == "Bright" ? "Bright" : "Dark";
-        _settings.ThemeMode = mode;
-        PopulateAccentPalette(mode, null);
-        ApplyTheme();
+        if ((sender as Button)?.Tag is string hex && Regex.IsMatch(hex, "^#[0-9A-Fa-f]{6}$"))
+        {
+            _pendingAccentColor = hex; CustomColorHexBox.Text = hex; CustomColorPreview.Background = new SolidColorBrush(ParseColor(hex, Colors.Gray));
+        }
     }
 
-    private void AccentColorBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void PopulatePaletteButtons()
     {
-        if (!IsInitialized || AccentColorBox.SelectedItem is null) return;
-        var hex = ExtractPaletteHex(AccentColorBox.SelectedItem.ToString());
-        if (hex is null) return;
-        _settings.AccentColor = hex;
-        ApplyTheme();
+        if (PaletteWrap == null) return;
+        PaletteWrap.Children.Clear();
+        foreach (var palette in Palette)
+        {
+            var button = new Button { Tag = palette.Hex, Width = 118, Height = 56, Margin = new Thickness(0,0,8,8), Padding = new Thickness(6), Style = (Style)FindResource("SecondaryButton"), BorderThickness = new Thickness(1) };
+            var stack = new StackPanel();
+            stack.Children.Add(new Border { Height = 20, CornerRadius = new CornerRadius(6), Background = new SolidColorBrush(ParseColor(palette.Hex, Colors.Gray)) });
+            stack.Children.Add(new TextBlock { Text = palette.Name, FontSize = 10, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0,4,0,0) });
+            button.Content = stack; button.Click += PaletteButton_Click; PaletteWrap.Children.Add(button);
+        }
     }
 
-    private void PopulateAccentPalette(string mode, string? preferredHex)
-    {
-        var palette = string.Equals(mode, "Bright", StringComparison.OrdinalIgnoreCase) ? BrightPalette : DarkPalette;
-        var target = preferredHex;
-        AccentColorBox.Items.Clear();
-
-        foreach (var entry in palette)
-            AccentColorBox.Items.Add($"{entry.Name} — {entry.Hex}");
-
-        var selected = palette.FirstOrDefault(entry =>
-            string.Equals(entry.Hex, target, StringComparison.OrdinalIgnoreCase));
-
-        if (string.IsNullOrWhiteSpace(selected.Hex))
-            selected = palette[0];
-
-        AccentColorBox.SelectedItem = $"{selected.Name} — {selected.Hex}";
-        _settings.AccentColor = selected.Hex;
-    }
-
-    private static string? ExtractPaletteHex(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return null;
-        var marker = value.LastIndexOf('—');
-        if (marker < 0) return null;
-        var hex = value[(marker + 1)..].Trim();
-        return Regex.IsMatch(hex, "^#[0-9A-Fa-f]{6}$") ? hex : null;
-    }
-
-    private static string GetDefaultAccent(string mode) =>
-        string.Equals(mode, "Bright", StringComparison.OrdinalIgnoreCase) ? BrightPalette[0].Hex : DarkPalette[0].Hex;
+    private void UpdateThemeSelectionVisuals() { ThemeDarkButton.Opacity = _pendingThemeMode == "Dark" ? 1.0 : 0.55; ThemeBrightButton.Opacity = _pendingThemeMode == "Bright" ? 1.0 : 0.55; }
+    private static string GetDefaultAccent(string mode) => Palette[0].Hex;
 
     private void ApplyTheme()
     {
         var bright = string.Equals(_settings.ThemeMode, "Bright", StringComparison.OrdinalIgnoreCase);
         var accent = ParseColor(_settings.AccentColor, ParseColor(GetDefaultAccent(_settings.ThemeMode), Colors.Gray));
-
-        var window = bright ? "#F3F5F6" : "#0A0D11";
-        var sidebar = bright ? "#FFFFFF" : "#080B0F";
-        var glass = bright ? "#FFFFFF" : "#12171D";
-        var panel = bright ? "#FAFBFC" : "#151B22";
-        var input = bright ? "#F6F8F9" : "#0E1318";
-        var line = bright ? "#D8E0E4" : "#27303A";
-        var text = bright ? "#17232C" : "#F2F5F7";
-        var muted = bright ? "#62717B" : "#9BA7B1";
-        var accentSoft = Color.FromArgb(bright ? (byte)28 : (byte)48, accent.R, accent.G, accent.B);
-
-        SetBrush("WindowBrush", window);
-        SetBrush("SidebarBrush", sidebar);
-        SetBrush("GlassBrush", glass);
-        SetBrush("PanelBrush", panel);
-        SetBrush("InputBrush", input);
-        SetBrush("LineBrush", line);
-        SetBrush("TextBrush", text);
-        SetBrush("MutedBrush", muted);
-        SetBrush("AccentBrush", accent);
-        SetBrush("AccentSoftBrush", accentSoft);
-        SetBrush("SuccessBrush", bright ? "#167447" : "#62C995");
-        SetBrush("DangerBrush", bright ? "#B42318" : "#E68181");
-
-        Background = (Brush)Resources["WindowBrush"];
-        Foreground = (Brush)Resources["TextBrush"];
+        var window = bright ? "#F3F5F6" : "#0A0D11"; var sidebar = bright ? "#FFFFFF" : "#080B0F"; var glass = bright ? "#FFFFFF" : "#12171D";
+        var panel = bright ? "#FAFBFC" : "#151B22"; var input = bright ? "#F6F8F9" : "#0E1318"; var line = bright ? "#D8E0E4" : "#27303A";
+        var text = bright ? "#17232C" : "#F2F5F7"; var muted = bright ? "#62717B" : "#9BA7B1"; var accentSoft = Color.FromArgb(bright ? (byte)28 : (byte)48, accent.R, accent.G, accent.B);
+        SetBrush("WindowBrush", window); SetBrush("SidebarBrush", sidebar); SetBrush("GlassBrush", glass); SetBrush("PanelBrush", panel); SetBrush("InputBrush", input); SetBrush("LineBrush", line);
+        SetBrush("TextBrush", text); SetBrush("MutedBrush", muted); SetBrush("AccentBrush", accent); SetBrush("AccentSoftBrush", accentSoft);
+        SetBrush("SuccessBrush", bright ? "#167447" : "#62C995"); SetBrush("DangerBrush", bright ? "#B42318" : "#E68181");
+        Background = (Brush)Resources["WindowBrush"]; Foreground = (Brush)Resources["TextBrush"];
     }
 
-    private void SetBrush(string key, string hex) =>
-        Resources[key] = new SolidColorBrush(ParseColor(hex, Colors.Transparent));
+    private void SaveSettings_Click(object sender, RoutedEventArgs e)
+    {
+        SaveSettingsFromUi(); SettingsStatus.Text = "Settings saved. The selected theme and preferences are now active.";
+    }
 
-    private void SetBrush(string key, Color color) =>
-        Resources[key] = new SolidColorBrush(color);
+    private void ResetSettings_Click(object sender, RoutedEventArgs e)
+    {
+        LoadSettingsIntoUi(); SettingsStatus.Text = "Staged changes reset to the last saved settings.";
+    }
 
-    private static Color ParseColor(string hex, Color fallback) =>
-        ColorConverter.ConvertFromString(hex) is Color color ? color : fallback;
+    private void SaveSettingsFromUi()
+    {
+        _settings.SimBriefPilotId = SimBriefPilotIdBox.Text.Trim(); _settings.AirlyId = SettingsAirlyIdBox.Text.Trim(); _settings.Username = SettingsUsernameBox.Text.Trim();
+        _settings.StartWithWindows = StartWithWindowsBox.IsChecked == true; _settings.AutoConnect = AutoConnectBox.IsChecked == true;
+        _settings.EnableAtcAudio = EnableAtcAudioBox.IsChecked == true; _settings.EnableMultiplayer = EnableMultiplayerBox.IsChecked == true; _settings.AutomaticModelMatching = AutomaticModelMatchingBox.IsChecked == true;
+        _settings.ReduceAnimations = ReduceAnimationsBox.IsChecked == true; _settings.LimitFps = LimitFpsBox.IsChecked == true; _settings.LowBandwidth = LowBandwidthBox.IsChecked == true;
+        _settings.HardwareAcceleration = HardwareAccelerationBox.IsChecked == true; _settings.CacheMapTiles = CacheMapTilesBox.IsChecked == true; _settings.CompactTraffic = CompactTrafficBox.IsChecked == true;
+        _settings.EnableSoundEffects = EnableSoundEffectsBox.IsChecked == true; _settings.PushToTalk = PushToTalkBox.IsChecked == true; _settings.VoiceVolume = (int)Math.Round(VoiceVolumeSlider.Value);
+        _settings.NetworkUpdateRate = (NetworkUpdateRateBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Balanced";
+        _settings.UiScalePercent = int.TryParse(((UiScaleBox.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "100%").TrimEnd('%'), out var scale) ? scale : 100;
+        _settings.AutomaticUpdates = AutomaticUpdatesBox.IsChecked == true; _settings.ShowReleaseNotes = ReleaseNotesBox.IsChecked == true;
+        _settings.ThemeMode = _pendingThemeMode; _settings.AccentColor = _pendingAccentColor; AirlyIdBox.Text = _settings.AirlyId; UsernameBox.Text = _settings.Username;
+        _settings.Save(); ApplyTheme(); UpdateThemeSelectionVisuals();
+    }
 
     private void LoadDemoUiState()
     {
@@ -638,8 +717,7 @@ public partial class MainWindow : Window
 
         try
         {
-            SaveSettingsFromUi();
-            var id = AirlyIdBox.Text.Trim();
+            var id = _settings.AirlyId.Trim();
             var region = ((ComboBoxItem)RegionBox.SelectedItem)?.Content?.ToString() ?? "Europe";
             if (string.IsNullOrWhiteSpace(id)) { ConnectStatus.Text = "Enter your Airly ID."; return; }
 
@@ -686,7 +764,6 @@ public partial class MainWindow : Window
 
     private async void ImportSimBrief_Click(object sender, RoutedEventArgs e)
     {
-        SaveSettingsFromUi();
         var pilotId = _settings.SimBriefPilotId.Trim();
 
         if (string.IsNullOrWhiteSpace(pilotId))
@@ -968,6 +1045,7 @@ window.addEventListener('resize',()=>map.invalidateSize());
         }
         var firstSeen = _settings.UpdateFirstSeenUtc ?? now;
         var mandatory = now - firstSeen >= TimeSpan.FromDays(7);
+        _updateIsMandatory = mandatory;
         UpdateTitle.Text = string.IsNullOrWhiteSpace(update.Name) ? "Airly Update" : update.Name;
         UpdateVersion.Text = "Version " + update.Version;
         UpdateNotes.Text = string.IsNullOrWhiteSpace(update.Notes) ? "A new Airly Client release is available." : update.Notes;
@@ -988,7 +1066,7 @@ window.addEventListener('resize',()=>map.invalidateSize());
         if (string.IsNullOrWhiteSpace(installer))
         {
             UpdateNowButton.IsEnabled = true;
-            UpdateCancelButton.IsEnabled = true;
+            UpdateCancelButton.IsEnabled = !_updateIsMandatory;
             UpdateNowButton.Content = "Update now";
             return;
         }
@@ -1002,7 +1080,7 @@ window.addEventListener('resize',()=>map.invalidateSize());
 
     private void UpdateCancel_Click(object sender, RoutedEventArgs e)
     {
-        if (!UpdateCancelButton.IsEnabled) return;
+        if (_updateIsMandatory || !UpdateCancelButton.IsEnabled) return;
         UpdateOverlayTransform.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0, 430, TimeSpan.FromMilliseconds(220)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn } });
         UpdateOverlay.Visibility = Visibility.Collapsed;
     }

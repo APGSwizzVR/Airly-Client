@@ -25,7 +25,58 @@
         <Style x:Key="SectionTitle" TargetType="TextBlock"><Setter Property="FontSize" Value="19"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Foreground" Value="{DynamicResource TextBrush}"/></Style>
         <Style x:Key="FieldLabel" TargetType="TextBlock"><Setter Property="FontSize" Value="11"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/><Setter Property="Margin" Value="0,14,0,6"/></Style>
         <Style TargetType="TextBox"><Setter Property="Background" Value="{DynamicResource InputBrush}"/><Setter Property="Foreground" Value="{DynamicResource TextBrush}"/><Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/><Setter Property="Padding" Value="10,7"/></Style>
-        <Style TargetType="ComboBox"><Setter Property="Background" Value="{DynamicResource InputBrush}"/><Setter Property="Foreground" Value="{DynamicResource TextBrush}"/><Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/></Style>
+        <Style TargetType="ComboBox">
+    <Setter Property="Background" Value="{DynamicResource InputBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+    <Setter Property="BorderThickness" Value="1"/>
+    <Setter Property="Padding" Value="10,7"/>
+    <Setter Property="Template">
+        <Setter.Value>
+            <ControlTemplate TargetType="ComboBox">
+                <Grid>
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8"/>
+                    <ContentPresenter Margin="10,0,34,0" VerticalAlignment="Center" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}" TextElement.Foreground="{DynamicResource TextBrush}"/>
+                    <ToggleButton HorizontalAlignment="Right" Width="34" Background="Transparent" BorderThickness="0" IsChecked="{Binding IsDropDownOpen, RelativeSource={RelativeSource TemplatedParent}}">
+                        <TextBlock Text="⌄" FontSize="14" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </ToggleButton>
+                    <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" PlacementTarget="{Binding RelativeSource={RelativeSource TemplatedParent}}" AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
+                        <Border Width="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="8" Margin="0,5,0,0" Padding="4">
+                            <ScrollViewer MaxHeight="260">
+                                <ItemsPresenter/>
+                            </ScrollViewer>
+                        </Border>
+                    </Popup>
+                </Grid>
+            </ControlTemplate>
+        </Setter.Value>
+    </Setter>
+</Style>
+<Style TargetType="ComboBoxItem">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+    <Setter Property="Padding" Value="10,9"/>
+    <Setter Property="Margin" Value="2"/>
+    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+    <Style.Triggers>
+        <Trigger Property="IsHighlighted" Value="True"><Setter Property="Background" Value="{DynamicResource AccentSoftBrush}"/></Trigger>
+        <Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="{DynamicResource AccentSoftBrush}"/></Trigger>
+    </Style.Triggers>
+</Style>
+<Style TargetType="TabControl">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+</Style>
+<Style TargetType="TabItem">
+    <Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Padding" Value="15,10"/>
+    <Setter Property="Margin" Value="0,0,5,0"/>
+    <Style.Triggers>
+        <Trigger Property="IsSelected" Value="True"><Setter Property="Foreground" Value="{DynamicResource TextBrush}"/><Setter Property="Background" Value="{DynamicResource AccentSoftBrush}"/></Trigger>
+        <Trigger Property="IsMouseOver" Value="True"><Setter Property="Foreground" Value="{DynamicResource TextBrush}"/></Trigger>
+    </Style.Triggers>
+</Style>
         <Style TargetType="CheckBox"><Setter Property="Foreground" Value="{DynamicResource TextBrush}"/><Setter Property="Margin" Value="0,10,0,0"/></Style>
         <Style TargetType="DataGrid"><Setter Property="Background" Value="{DynamicResource InputBrush}"/><Setter Property="Foreground" Value="{DynamicResource TextBrush}"/><Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/><Setter Property="RowBackground" Value="{DynamicResource PanelBrush}"/><Setter Property="AlternatingRowBackground" Value="{DynamicResource InputBrush}"/><Setter Property="GridLinesVisibility" Value="Horizontal"/><Setter Property="FontSize" Value="12"/></Style>
         <Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="{DynamicResource GlassBrush}"/><Setter Property="Foreground" Value="{DynamicResource MutedBrush}"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Padding" Value="9,8"/></Style>
@@ -203,101 +254,197 @@
                 </StackPanel></ScrollViewer></Grid>
 
                 <Grid x:Name="AiHelperView" Visibility="Collapsed">
-  <Grid>
-    <Grid.ColumnDefinitions>
-      <ColumnDefinition x:Name="AiHistoryColumn" Width="250"/>
-      <ColumnDefinition Width="*"/>
-    </Grid.ColumnDefinitions>
-
-    <Border Grid.Column="0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,1,0" Padding="12">
-      <Grid>
-        <Grid.RowDefinitions>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="Auto"/>
-          <RowDefinition Height="*"/>
-        </Grid.RowDefinitions>
-        <DockPanel Margin="0,0,0,12">
-          <TextBlock Text="Chats" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
-          <Button DockPanel.Dock="Right" Content="＋" Width="34" Height="34" Click="AiNewChat_Click" Style="{StaticResource SecondaryButton}" BorderThickness="0" ToolTip="New chat"/>
-        </DockPanel>
-        <Button Grid.Row="1" Content="＋  New chat" Height="38" HorizontalContentAlignment="Left" Padding="12,0" Click="AiNewChat_Click" Style="{StaticResource SecondaryButton}" Margin="0,0,0,10"/>
-        <ListBox Grid.Row="2" x:Name="AiChatList" BorderThickness="0" Background="Transparent" SelectionChanged="AiChatList_SelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-          <ListBox.ItemTemplate>
-            <DataTemplate>
-              <Border Padding="10,9" Margin="0,0,0,4" CornerRadius="10" Background="{DynamicResource InputBrush}">
-                <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextBrush}"/>
-              </Border>
-            </DataTemplate>
-          </ListBox.ItemTemplate>
-        </ListBox>
-      </Grid>
-    </Border>
-
-    <Grid Grid.Column="1">
-      <Grid.RowDefinitions>
-        <RowDefinition Height="Auto"/>
-        <RowDefinition Height="*"/>
-        <RowDefinition Height="Auto"/>
-      </Grid.RowDefinitions>
-
-      <Grid Grid.Row="0" Height="58" Margin="0,0,0,1">
-        <Button x:Name="AiHistoryToggle" Content="‹" Width="38" Height="38" HorizontalAlignment="Left" VerticalAlignment="Center" Click="AiHistoryToggle_Click" Style="{StaticResource SecondaryButton}" BorderThickness="0" ToolTip="Hide chat history"/>
-        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-          <TextBlock Text="Airly AI" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center"/>
-          <TextBlock Text="Aviation assistant" FontSize="10" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center" Margin="0,1,0,0"/>
-        </StackPanel>
-      </Grid>
-
-      <ScrollViewer Grid.Row="1" x:Name="AiScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="20,8,20,28">
-        <StackPanel x:Name="AiMessages" MaxWidth="900" HorizontalAlignment="Center"/>
-      </ScrollViewer>
-
-      <StackPanel Grid.Row="2" MaxWidth="900" HorizontalAlignment="Center" Width="900" Margin="20,8,20,18">
-        <TextBlock x:Name="AiStatusText" Text="Ready" HorizontalAlignment="Center" Foreground="{DynamicResource MutedBrush}" FontSize="10" Margin="0,0,0,7"/>
-        <Border Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="18" Padding="8">
-          <Grid>
-            <Grid.RowDefinitions>
-              <RowDefinition Height="Auto"/>
-              <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-            <TextBlock x:Name="AiAttachment" Text="No attachment" Grid.Row="0" Visibility="Collapsed"/>
-            <Grid Grid.Row="1">
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="42"/>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="92"/>
-                <ColumnDefinition Width="42"/>
-                <ColumnDefinition Width="42"/>
-              </Grid.ColumnDefinitions>
-              <Button Grid.Column="0" Content="＋" Click="AiFile_Click" Width="36" Height="36" Style="{StaticResource SecondaryButton}" BorderThickness="0" ToolTip="Upload a file"/>
-              <TextBox Grid.Column="1" x:Name="AiInput" BorderThickness="0" Background="Transparent" MinHeight="42" MaxHeight="180" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="8,9" ToolTip="Message Airly AI" KeyDown="AiInput_KeyDown"/>
-              <ComboBox Grid.Column="2" x:Name="AiPowerBox" Height="34" Margin="6,4,4,0" VerticalAlignment="Top" SelectedIndex="1" SelectionChanged="AiPower_SelectionChanged">
-                <ComboBoxItem Content="Fast"/>
-                <ComboBoxItem Content="Medium"/>
-                <ComboBoxItem Content="Extra"/>
-              </ComboBox>
-              <Button Grid.Column="3" Content="☺" Tag="☺" Click="AiEmoji_Click" Width="36" Height="36" Style="{StaticResource SecondaryButton}" BorderThickness="0" ToolTip="Insert emoji"/>
-              <Button Grid.Column="4" Content="↑" Click="AiAsk_Click" Width="36" Height="36" Style="{StaticResource PrimaryButton}" ToolTip="Send"/>
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="AiHistoryColumn" Width="0"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+        <Border Grid.Column="0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,1,0" Padding="12" Visibility="Visible">
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                <DockPanel Margin="0,0,0,12">
+                    <TextBlock Text="Chats" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <Button DockPanel.Dock="Right" Content="＋" Width="34" Height="34" Click="AiNewChat_Click" Style="{StaticResource SecondaryButton}" BorderThickness="0" ToolTip="New chat"/>
+                </DockPanel>
+                <Button Grid.Row="1" Content="＋  New chat" Height="38" HorizontalContentAlignment="Left" Padding="12,0" Click="AiNewChat_Click" Style="{StaticResource SecondaryButton}" Margin="0,0,0,10"/>
+                <ListBox Grid.Row="2" x:Name="AiChatList" BorderThickness="0" Background="Transparent" SelectionChanged="AiChatList_SelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.ItemContainerStyle>
+                        <Style TargetType="ListBoxItem">
+                            <Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,0,0,5"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Style.Triggers>
+                                <Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="{DynamicResource AccentSoftBrush}"/></Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ListBox.ItemContainerStyle>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Border Padding="10,9" CornerRadius="10" Background="{DynamicResource InputBrush}">
+                                <TextBlock Text="{Binding Title}" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextBrush}"/>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
             </Grid>
-          </Grid>
         </Border>
-      </StackPanel>
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions><RowDefinition Height="58"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Grid Grid.Row="0" Margin="0,0,0,1">
+                <Button x:Name="AiHistoryToggle" Content="›" Width="38" Height="38" HorizontalAlignment="Left" VerticalAlignment="Center" Click="AiHistoryToggle_Click" Style="{StaticResource SecondaryButton}" BorderThickness="0" ToolTip="Show chat history"/>
+                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <TextBlock Text="Airly AI" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Aviation assistant" FontSize="10" Foreground="{DynamicResource MutedBrush}" HorizontalAlignment="Center" Margin="0,1,0,0"/>
+                </StackPanel>
+            </Grid>
+            <ScrollViewer Grid.Row="1" x:Name="AiScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" Padding="18,8,18,20">
+                <Grid HorizontalAlignment="Stretch">
+                    <StackPanel x:Name="AiMessages" HorizontalAlignment="Stretch"/>
+                </Grid>
+            </ScrollViewer>
+            <StackPanel Grid.Row="2" HorizontalAlignment="Stretch" Margin="12,6,12,14">
+                <TextBlock x:Name="AiStatusText" Text="Ready" HorizontalAlignment="Center" Foreground="{DynamicResource MutedBrush}" FontSize="10" Margin="0,0,0,7"/>
+                <Border x:Name="AiEmojiPanel" Visibility="Collapsed" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="14" Padding="10" Margin="0,0,0,8">
+                    <Border.RenderTransform><TranslateTransform x:Name="AiEmojiTransform" Y="28"/></Border.RenderTransform>
+                    <ScrollViewer Height="150" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <WrapPanel x:Name="AiEmojiWrap" HorizontalAlignment="Center"/>
+                    </ScrollViewer>
+                </Border>
+                <Border Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="18" Padding="8">
+                    <Grid>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <TextBlock x:Name="AiAttachment" Text="No attachment" Grid.Row="0" Visibility="Collapsed"/>
+                        <Grid Grid.Row="1">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="42"/><ColumnDefinition Width="*"/><ColumnDefinition Width="88"/><ColumnDefinition Width="42"/><ColumnDefinition Width="42"/>
+                            </Grid.ColumnDefinitions>
+                            <Button Grid.Column="0" Content="＋" Click="AiFile_Click" Width="36" Height="36" Style="{StaticResource SecondaryButton}" BorderThickness="0" ToolTip="Upload a file"/>
+                            <TextBox Grid.Column="1" x:Name="AiInput" BorderThickness="0" Background="Transparent" MinHeight="42" MaxHeight="180" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" Padding="8,9" ToolTip="Message Airly AI" PreviewKeyDown="AiInput_PreviewKeyDown"/>
+                            <ComboBox Grid.Column="2" x:Name="AiPowerBox" Height="34" Margin="6,4,4,0" VerticalAlignment="Top" SelectedIndex="1">
+                                <ComboBoxItem Content="Fast"/><ComboBoxItem Content="Medium"/><ComboBoxItem Content="Extra"/>
+                            </ComboBox>
+                            <Button Grid.Column="3" Content="☺" Click="AiEmoji_Click" Width="36" Height="36" Style="{StaticResource SecondaryButton}" BorderThickness="0" ToolTip="Emoji picker"/>
+                            <Button Grid.Column="4" Content="↑" Click="AiAsk_Click" Width="36" Height="36" Style="{StaticResource PrimaryButton}" ToolTip="Send"/>
+                        </Grid>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </Grid>
     </Grid>
-  </Grid>
 </Grid>
 
-<Grid x:Name="SettingsView" Visibility="Collapsed"><Border Style="{StaticResource Card}"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel MaxWidth="760"><TextBlock Text="Settings" Style="{StaticResource SectionTitle}"/><TextBlock Text="Client preferences are stored locally on this Windows installation." Foreground="{StaticResource MutedBrush}" Margin="0,6,0,10"/><TextBlock Text="SIMBRIEF" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,18,0,0"/><TextBlock Text="Pilot ID" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SimBriefPilotIdBox" Height="36"/><TextBlock Text="Your SimBrief Pilot ID is used only when you explicitly import a flight plan." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,6,0,0"/><TextBlock Text="AIRLY" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,22,0,0"/><TextBlock Text="Airly ID" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SettingsAirlyIdBox" Height="36"/><TextBlock Text="Username" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SettingsUsernameBox" Height="36"/><TextBlock Text="CLIENT" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,22,0,0"/><CheckBox x:Name="StartWithWindowsBox" Content="Start Airly Client with Windows"/><CheckBox x:Name="AutoConnectBox" Content="Automatically connect to Airly"/><CheckBox x:Name="EnableAtcAudioBox" Content="Enable ATC audio" IsChecked="True"/><CheckBox x:Name="EnableMultiplayerBox" Content="Enable multiplayer traffic" IsChecked="True"/><CheckBox x:Name="AutomaticModelMatchingBox" Content="Use automatic model matching" IsChecked="True"/><TextBlock Text="APPEARANCE" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource AccentBrush}" Margin="0,24,0,0"/>
-<TextBlock Text="Theme" Style="{StaticResource FieldLabel}"/>
-<ComboBox x:Name="ThemeModeBox" Height="36" SelectionChanged="ThemeModeBox_SelectionChanged">
-    <ComboBoxItem Content="Dark"/>
-    <ComboBoxItem Content="Bright"/>
-</ComboBox>
-<TextBlock Text="Color palette" Style="{StaticResource FieldLabel}"/>
-<ComboBox x:Name="AccentColorBox" Height="36" SelectionChanged="AccentColorBox_SelectionChanged"/>
-<TextBlock Text="Palette options change with the selected theme. Default keeps the neutral system treatment." Foreground="{DynamicResource MutedBrush}" FontSize="11" Margin="0,6,0,0"/>
-<Button Content="Save settings" Width="125" Height="38" HorizontalAlignment="Left" Margin="0,20,0,0" Click="SaveSettings_Click" Style="{StaticResource PrimaryButton}"/><TextBlock x:Name="SettingsStatus" Foreground="{StaticResource MutedBrush}" Margin="0,10,0,0"/></StackPanel></ScrollViewer></Border></Grid>
+<Grid x:Name="SettingsView" Visibility="Collapsed">
+    <Border Style="{StaticResource Card}">
+        <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <TabControl Grid.Row="0" Margin="0,0,0,10">
+                <TabItem Header="Setup">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="4,4,12,10">
+                            <TextBlock Text="Flight setup" Style="{StaticResource SectionTitle}"/>
+                            <TextBlock Text="Saved simulator, account and dispatch preferences." Foreground="{StaticResource MutedBrush}" Margin="0,6,0,10"/>
+                            <TextBlock Text="SIMBRIEF" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,18,0,0"/>
+                            <TextBlock Text="Pilot ID" Style="{StaticResource FieldLabel}"/>
+                            <TextBox x:Name="SimBriefPilotIdBox" Height="36"/>
+                            <TextBlock Text="Used only when you explicitly import a flight plan." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,6,0,0"/>
+                            <TextBlock Text="AIRLY ACCOUNT" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,22,0,0"/>
+                            <TextBlock Text="Airly ID" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SettingsAirlyIdBox" Height="36"/>
+                            <TextBlock Text="Username" Style="{StaticResource FieldLabel}"/><TextBox x:Name="SettingsUsernameBox" Height="36"/>
+                            <TextBlock Text="STARTUP" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,22,0,0"/>
+                            <CheckBox x:Name="StartWithWindowsBox" Content="Start Airly Client with Windows"/>
+                            <CheckBox x:Name="AutoConnectBox" Content="Automatically connect when a simulator is detected"/>
+                            <CheckBox x:Name="AutomaticModelMatchingBox" Content="Use automatic aircraft model matching" IsChecked="True"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+                <TabItem Header="Appearance">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="4,4,12,10">
+                            <TextBlock Text="Appearance" Style="{StaticResource SectionTitle}"/>
+                            <TextBlock Text="Changes are staged here and only affect the client after Save settings." Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,6,0,14"/>
+                            <TextBlock Text="THEMES" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,10,0,14">
+                                <Button x:Name="ThemeDarkButton" Content="Dark" Tag="Dark" Width="120" Height="42" Click="ThemeDark_Click" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0"/>
+                                <Button x:Name="ThemeBrightButton" Content="Bright" Tag="Bright" Width="120" Height="42" Click="ThemeBright_Click" Style="{StaticResource SecondaryButton}"/>
+                            </StackPanel>
+                            <TextBlock Text="COLOR PALETTE" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,4,0,8"/>
+                            <WrapPanel x:Name="PaletteWrap" ItemWidth="128" ItemHeight="62"/>
+                            <Border Background="{DynamicResource InputBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="12" Padding="12" Margin="0,14,0,0">
+                                <StackPanel>
+                                    <TextBlock Text="CUSTOM COLOR" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource MutedBrush}"/>
+                                    <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                        <Image x:Name="CustomColorWheel" Width="170" Height="170" MouseLeftButtonDown="CustomColorWheel_MouseLeftButtonDown"/>
+                                        <StackPanel Margin="16,0,0,0" VerticalAlignment="Center">
+                                            <Border x:Name="CustomColorPreview" Width="90" Height="42" CornerRadius="8" Background="#80858B"/>
+                                            <TextBox x:Name="CustomColorHexBox" Height="36" Width="110" Margin="0,10,0,0" Text="#80858B"/>
+                                            <Button Content="Use custom color" Width="130" Height="36" Margin="0,10,0,0" Click="CustomColorApply_Click" Style="{StaticResource SecondaryButton}"/>
+                                        </StackPanel>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+                <TabItem Header="Optimization">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="4,4,12,10">
+                            <TextBlock Text="Performance" Style="{StaticResource SectionTitle}"/>
+                            <TextBlock Text="Client-side options intended to reduce rendering, traffic or background work." Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,6,0,12"/>
+                            <CheckBox x:Name="ReduceAnimationsBox" Content="Reduce interface animations"/>
+                            <CheckBox x:Name="LimitFpsBox" Content="Limit UI rendering to reduce GPU usage"/>
+                            <CheckBox x:Name="LowBandwidthBox" Content="Use lower-frequency network updates"/>
+                            <CheckBox x:Name="HardwareAccelerationBox" Content="Use hardware acceleration where available" IsChecked="True"/>
+                            <CheckBox x:Name="CacheMapTilesBox" Content="Cache map resources locally"/>
+                            <CheckBox x:Name="CompactTrafficBox" Content="Use compact traffic rendering"/>
+                            <TextBlock Text="DISPLAY" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,22,0,0"/>
+                            <TextBlock Text="Interface scale" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox x:Name="UiScaleBox" Height="36"><ComboBoxItem Content="100%"/><ComboBoxItem Content="110%"/><ComboBoxItem Content="125%"/><ComboBoxItem Content="150%"/></ComboBox>
+                            <TextBlock Text="These settings are staged until you press Save settings." Foreground="{StaticResource MutedBrush}" FontSize="11" Margin="0,12,0,0"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+                <TabItem Header="Network &amp; Audio">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="4,4,12,10">
+                            <TextBlock Text="Network and audio" Style="{StaticResource SectionTitle}"/>
+                            <CheckBox x:Name="EnableAtcAudioBox" Content="Enable ATC audio" IsChecked="True"/>
+                            <CheckBox x:Name="EnableMultiplayerBox" Content="Enable multiplayer traffic" IsChecked="True"/>
+                            <CheckBox x:Name="EnableSoundEffectsBox" Content="Enable Airly interface sounds" IsChecked="True"/>
+                            <CheckBox x:Name="PushToTalkBox" Content="Use push-to-talk for network voice"/>
+                            <TextBlock Text="VOICE" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,22,0,0"/>
+                            <TextBlock Text="Output volume" Style="{StaticResource FieldLabel}"/>
+                            <Slider x:Name="VoiceVolumeSlider" Minimum="0" Maximum="100" Value="80" Height="30"/>
+                            <TextBlock Text="Network behavior" Style="{StaticResource FieldLabel}"/>
+                            <ComboBox x:Name="NetworkUpdateRateBox" Height="36"><ComboBoxItem Content="Balanced"/><ComboBoxItem Content="Low bandwidth"/><ComboBoxItem Content="High detail"/></ComboBox>
+                            <TextBlock Text="Audio and network preferences are saved together with the rest of the client settings." Foreground="{StaticResource MutedBrush}" FontSize="11" TextWrapping="Wrap" Margin="0,12,0,0"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+                <TabItem Header="Updates">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="4,4,12,10">
+                            <TextBlock Text="Updates" Style="{StaticResource SectionTitle}"/>
+                            <TextBlock Text="Airly checks the official GitHub release feed when the client starts." Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,6,0,14"/>
+                            <CheckBox x:Name="AutomaticUpdatesBox" Content="Automatically check for updates" IsChecked="True"/>
+                            <CheckBox x:Name="ReleaseNotesBox" Content="Show release notes in the update notification" IsChecked="True"/>
+                            <TextBlock Text="UPDATE POLICY" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" Margin="0,22,0,0"/>
+                            <TextBlock Text="When a newer release is available, a notification slides in from the right. You can cancel it temporarily; after 7 days from the first offer, the update becomes mandatory." Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+            </TabControl>
+            <StackPanel Grid.Row="1">
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="Save settings" Width="135" Height="40" Click="SaveSettings_Click" Style="{StaticResource PrimaryButton}"/>
+                    <Button Content="Reset staged changes" Width="150" Height="40" Margin="8,0,0,0" Click="ResetSettings_Click" Style="{StaticResource SecondaryButton}"/>
+                </StackPanel>
+                <TextBlock x:Name="SettingsStatus" Foreground="{StaticResource MutedBrush}" Margin="0,9,0,0"/>
+            </StackPanel>
+        </Grid>
+    </Border>
+</Grid>
             </Grid>
         </Grid>
-        <Border x:Name="UpdateOverlay" Grid.ColumnSpan="2" Width="390" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,22,22,0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="16" Padding="20" Visibility="Collapsed" Panel.ZIndex="50"><Border.RenderTransform><TranslateTransform x:Name="UpdateOverlayTransform" X="430"/></Border.RenderTransform><StackPanel><TextBlock Text="AIRLY UPDATE" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/><TextBlock x:Name="UpdateTitle" Text="Airly Update" FontSize="22" FontWeight="SemiBold" Margin="0,4,0,0"/><TextBlock x:Name="UpdateVersion" Text="Version 1.0.0" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,3,0,0"/><TextBlock x:Name="UpdateNotes" Text="A new version is available." TextWrapping="Wrap" Foreground="{StaticResource TextBrush}" Margin="0,16,0,0"/><TextBlock x:Name="UpdateMandatoryText" Text="You can postpone this update for up to 7 days." FontSize="10" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,12,0,0"/><StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0"><Button x:Name="UpdateCancelButton" Content="Cancel" Width="86" Height="36" Click="UpdateCancel_Click" Style="{StaticResource SecondaryButton}"/><Button x:Name="UpdateNowButton" Content="Update now" Width="112" Height="36" Margin="8,0,0,0" Click="UpdateNow_Click" Style="{StaticResource PrimaryButton}"/></StackPanel></StackPanel></Border>
+        <Border x:Name="UpdateOverlay" Grid.ColumnSpan="2" Width="390" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,22,22,0" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1" CornerRadius="16" Padding="20" Visibility="Collapsed" Panel.ZIndex="50"><Border.RenderTransform><TranslateTransform x:Name="UpdateOverlayTransform" X="430"/></Border.RenderTransform><StackPanel><TextBlock Text="UPDATE AVAILABLE" FontSize="10" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/><TextBlock x:Name="UpdateTitle" Text="Airly Update" FontSize="22" FontWeight="SemiBold" Margin="0,4,0,0"/><TextBlock x:Name="UpdateVersion" Text="Version 1.0.0" FontSize="12" Foreground="{StaticResource MutedBrush}" Margin="0,3,0,0"/><TextBlock x:Name="UpdateNotes" Text="A new version is available." TextWrapping="Wrap" Foreground="{StaticResource TextBrush}" Margin="0,16,0,0"/><TextBlock x:Name="UpdateMandatoryText" Text="You can cancel this notification for up to 7 days. After that, the update is required." FontSize="10" Foreground="{StaticResource MutedBrush}" TextWrapping="Wrap" Margin="0,12,0,0"/><StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0"><Button x:Name="UpdateCancelButton" Content="Cancel" Width="86" Height="36" Click="UpdateCancel_Click" Style="{StaticResource SecondaryButton}"/><Button x:Name="UpdateNowButton" Content="Update now" Width="112" Height="36" Margin="8,0,0,0" Click="UpdateNow_Click" Style="{StaticResource PrimaryButton}"/></StackPanel></StackPanel></Border>
     </Grid>
 </Window>

@@ -14,7 +14,20 @@ public sealed class AppSettings
     public bool EnableMultiplayer { get; set; } = true;
     public bool AutomaticModelMatching { get; set; } = true;
     public string ThemeMode { get; set; } = "Dark";
-    public string AccentColor { get; set; } = "#8A96A3";
+    public string AccentColor { get; set; } = "#80858B";
+    public bool ReduceAnimations { get; set; }
+    public bool LimitFps { get; set; }
+    public bool LowBandwidth { get; set; }
+    public bool HardwareAcceleration { get; set; } = true;
+    public bool CacheMapTiles { get; set; }
+    public bool CompactTraffic { get; set; }
+    public bool EnableSoundEffects { get; set; } = true;
+    public bool PushToTalk { get; set; }
+    public int VoiceVolume { get; set; } = 80;
+    public string NetworkUpdateRate { get; set; } = "Balanced";
+    public int UiScalePercent { get; set; } = 100;
+    public bool AutomaticUpdates { get; set; } = true;
+    public bool ShowReleaseNotes { get; set; } = true;
     public string UpdateFirstSeenVersion { get; set; } = string.Empty;
     public DateTimeOffset? UpdateFirstSeenUtc { get; set; }
 
