@@ -1302,7 +1302,6 @@ window.addEventListener('resize',()=>map.invalidateSize());
     {
         public string? reply { get; set; }
     }
-    private sealed class ActivationResponse { public bool Valid { get; set; } public string Message { get; set; } = string.Empty; }
     private sealed class ChallengeResponse { public bool Valid { get; set; } public string Challenge { get; set; } = string.Empty; public string Message { get; set; } = string.Empty; }
     private sealed class VerifyResponse { public bool Valid { get; set; } public string? AccessToken { get; set; } public string Message { get; set; } = string.Empty; }
 
