@@ -702,30 +702,21 @@ public partial class MainWindow : Window
     private async void Connect_Click(object sender, RoutedEventArgs e)
     {
         if (_connected) { Disconnect(); return; }
-        ConnectButton.IsEnabled = false;
-        ConnectStatus.Text = "Validating Airly membership…";
-
-        try
-        {
-            var id = _settings.AirlyId.Trim();
-            var region = ((ComboBoxItem)RegionBox.SelectedItem)?.Content?.ToString() ?? "Europe";
-            if (string.IsNullOrWhiteSpace(id)) { ConnectStatus.Text = "Enter your Airly ID."; return; }
-
-            var response = await _http.PostAsJsonAsync($"{ClientConfig.ApiBaseUrl}api/client/activate", new { region, airlyId=id });
-            var result = await response.Content.ReadFromJsonAsync<ActivationResponse>();
-
-            if (!response.IsSuccessStatusCode || result is null || !result.Valid)
-            {
-                ConnectStatus.Text = result?.Message ?? "Activation service unavailable.";
-                return;
+        ConnectButton.IsEnabled=false; ConnectStatus.Text="Authenticating Airly ID…";
+        try {
+            var id=AirlyIdBox.Text.Trim().ToUpperInvariant(); var code=AirlyActivationCodeBox.Text.Trim().ToUpperInvariant();
+            using var key=new AirlyDeviceIdentity().GetOrCreateKey(); var publicKey=AirlyDeviceIdentity.PublicKey(key);
+            if(string.IsNullOrWhiteSpace(id)){ConnectStatus.Text="Enter your Airly ID.";return;}
+            if(!string.IsNullOrWhiteSpace(code)){
+                using var er=await _http.PostAsJsonAsync($"{ClientConfig.ApiBaseUrl}api/client/activate",new{airlyId=id,activationCode=code,publicKey,deviceName=Environment.MachineName});
+                var e1=await er.Content.ReadFromJsonAsync<ActivationResponse>();if(!er.IsSuccessStatusCode||e1 is null||!e1.Valid){ConnectStatus.Text=e1?.Message??"Device enrollment failed.";return;}AirlyActivationCodeBox.Clear();
             }
-
-            _connected = true;
-            SetConnectionState(true);
-            ConnectStatus.Text = "Authenticated. Realtime network session is ready.";
-        }
-        catch (Exception ex) { ConnectStatus.Text = $"Connection failed: {ex.Message}"; }
-        finally { ConnectButton.IsEnabled = true; }
+            using var cr=await _http.PostAsJsonAsync($"{ClientConfig.ApiBaseUrl}api/client/challenge",new{airlyId=id,publicKey});var ch=await cr.Content.ReadFromJsonAsync<ChallengeResponse>();
+            if(!cr.IsSuccessStatusCode||ch is null||!ch.Valid){ConnectStatus.Text=ch?.Message??"This device is not enrolled for that Airly ID.";return;}
+            var sig=AirlyDeviceIdentity.Sign(key,ch.Challenge);using var vr=await _http.PostAsJsonAsync($"{ClientConfig.ApiBaseUrl}api/client/verify",new{airlyId=id,publicKey,challenge=ch.Challenge,signature=sig});var v=await vr.Content.ReadFromJsonAsync<VerifyResponse>();
+            if(!vr.IsSuccessStatusCode||v is null||!v.Valid){ConnectStatus.Text=v?.Message??"Device authentication failed.";return;}
+            _settings.AirlyId=id;_settings.AirlyAccessToken=v.AccessToken??string.Empty;_settings.Username=UsernameBox.Text.Trim();_settings.Save();_connected=true;SetConnectionState(true);ConnectStatus.Text="Authenticated. This Windows device is bound to your Airly ID.";
+        } catch(Exception ex){ConnectStatus.Text=$"Connection failed: {ex.Message}";} finally{ConnectButton.IsEnabled=true;}
     }
 
     private void Disconnect_Click(object sender, RoutedEventArgs e) => Disconnect();
@@ -1311,4 +1302,8 @@ window.addEventListener('resize',()=>map.invalidateSize());
     {
         public string? reply { get; set; }
     }
+    private sealed class ActivationResponse { public bool Valid { get; set; } public string Message { get; set; } = string.Empty; }
+    private sealed class ChallengeResponse { public bool Valid { get; set; } public string Challenge { get; set; } = string.Empty; public string Message { get; set; } = string.Empty; }
+    private sealed class VerifyResponse { public bool Valid { get; set; } public string? AccessToken { get; set; } public string Message { get; set; } = string.Empty; }
+
 }

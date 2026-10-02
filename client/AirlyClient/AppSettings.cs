@@ -7,6 +7,7 @@ public sealed class AppSettings
 {
     public string SimBriefPilotId { get; set; } = string.Empty;
     public string AirlyId { get; set; } = string.Empty;
+    public string AirlyAccessToken { get; set; } = string.Empty;
     public string Username { get; set; } = string.Empty;
     public bool StartWithWindows { get; set; }
     public bool AutoConnect { get; set; }
